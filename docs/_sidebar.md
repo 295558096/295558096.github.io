@@ -4,7 +4,7 @@
 * [Java基础](/java/)
 * [JUC](/juc/)
 * [JVM](/jvm/)
-* [设计模式](/designpattern/)
+* [设计模式](/design-pattern/)
 * [Spring全家桶](/spring/)
 * [主流框架](/framework/)
 * [数据库](/db/)
