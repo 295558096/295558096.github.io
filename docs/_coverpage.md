@@ -14,5 +14,9 @@
 
 <br>
 
-[GitHub](https://github.com/295558096)
+<img src="_media/icon.svg" alt="icon" style="zoom:25%;"/>
+
 [Getting Started](README.md)
+
+
+![](_media/3.png)

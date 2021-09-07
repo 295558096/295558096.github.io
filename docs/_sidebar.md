@@ -1,14 +1,23 @@
-* [首页](/)
-* [指北](/guide/)
-* [代码模板](/template/)
-* [Java基础](/java/)
-* [JUC](/juc/)
-* [JVM](/jvm/)
-* [设计模式](/design-patterns/)
-* [Spring全家桶](/spring/)
-* [主流框架](/framework/)
-* [数据库](/db/)
-* [中间件](/middle-ware/)
-* [经典理论](/principle/)
-* [算法与数据结构](/data-structure/)
-* [读书笔记](/note/)
+* [**首页**](/)
+* [**序言**](/README)
+* [**指北**](/guide/)
+* **代码复用**
+    * [代码模板](/template/)
+* **入门**
+    * [Java基础](/java/)
+
+* **进阶**
+    * [JVM](/jvm/)
+    * [JUC](/juc/)
+* **框架**
+    * [Spring全家桶](/spring/)
+    * [主流框架](/framework/)
+* **尖子生**
+    * [数据库](/db/)
+    * [中间件](/middle-ware/)
+* **内功**
+    * [设计模式](/design-patterns/)
+    * [经典理论](/principle/)
+    * [算法与数据结构](/data-structure/)
+* **读书笔记**
+    * [读书笔记](/note/)
