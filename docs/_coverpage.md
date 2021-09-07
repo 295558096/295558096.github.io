@@ -1,11 +1,12 @@
-<img src="image/index/home.png" alt="home" style="zoom:30%;" />
+<img src="image/index/kamier.png" alt="home" style="zoom:25%;" />
 
 
-- 问渠那得清如许，为有源头活水来。
+- 切忌愚鲁。
+
+- 优雅永不过时。
   
-- 纸上得来终觉浅，绝知此事要躬行。
-  
-- 谁道人生无再少，门前流水尚能西。
+- 如果你没有目的，就什么也别做。
+
 <br>
 ------
 
