@@ -1,4 +1,4 @@
-![home](image/home.jpg)
+![home](image/index/home.jpg)
 
 - Simple and lightweight
 
