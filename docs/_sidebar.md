@@ -5,7 +5,8 @@
     * [代码模板](/code-template/)
     * [设计文档模板](/doc-template/)
 * **入门**
-    * [Java基础](/java/)
+    * [Java简介](/java/)
+    * [Java基础](/java/base/)
 * **进阶**
     * [JVM](/jvm/)
     * [JUC](/juc/)
