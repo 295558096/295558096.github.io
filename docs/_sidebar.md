@@ -21,4 +21,5 @@
     * [经典理论](/principle/)
     * [算法与数据结构](/data-structure/)
 * **读书笔记**
-    * [读书笔记](/note/)
+    * [《java并发编程的艺术》](/note/java并发编程的艺术/)
+    * [《spring技术内幕》](/note/spring技术内幕/)
