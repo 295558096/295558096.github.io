@@ -5,7 +5,8 @@
     * [代码模板](/code-template/)
     * [设计文档模板](/doc-template/)
 * **入门**
-    * [Java基础](/java/)
+    * [Java简介](/java/)
+    * [Java基础](/java/base/)
 * **进阶**
     * [JVM](/jvm/)
     * [JUC](/juc/)
@@ -20,4 +21,5 @@
     * [经典理论](/principle/)
     * [算法与数据结构](/data-structure/)
 * **读书笔记**
-    * [读书笔记](/note/)
+    * [《java并发编程的艺术》](/note/java并发编程的艺术/)
+    * [《spring技术内幕》](/note/spring技术内幕/)
