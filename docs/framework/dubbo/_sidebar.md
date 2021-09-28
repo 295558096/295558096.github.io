@@ -3,6 +3,6 @@
 * [前世今生](/framework/dubbo/origin)
 * [特性](/framework/dubbo/feature)
 * [基础知识](/framework/dubbo/base)
-* [核心概念](/framework/dubbo/coreidea)
 * [架构](/framework/dubbo/architecture)
+* [核心概念](/framework/dubbo/coreidea)
 * [HelloWorld](/framework/dubbo/helloworld)
