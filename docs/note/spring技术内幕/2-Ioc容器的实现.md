@@ -181,23 +181,27 @@ Resource资源定位 --> BeanDefinition载入 --> 注册BeanDefinition
 
 
 
-#### Resource定位
+#### Resource资源定位
 
 ##### 基础概念
 
-- **BeanDefinition**的资源定位，它由`ResourceLoader`通过统一的**Resource**接口来完成，这个Resource对各种形式的BeanDefinition的使用都提供了统一接口。
-- 这个定位过程类似于容器寻找数据的过程，可以从文件系统中、类路径中寻找。
-- Spring通过BeanDefinitionReader来对这些信息进行处理。
-- ApplicationContext中，Spring已经为我们提供了一系列加载不同Resource的读取器的实现，而DefaultListableBeanFactory只是一个纯粹的IoC容器，需要为它配置特定的读取器才能完成这些功能。
-- DefaultListableBeanFactory这种更底层的容器，能提高定制IoC容器的灵活性。
+- `BeanDefinition`的资源定位，它由`ResourceLoader`通过统一的`Resource`接口来完成，这个`Resource`对各种形式的`BeanDefinition`的使用都提供了统一接口。
+- 这个定位过程类似于**容器寻找数据**的过程，可以从文件系统中、类路径中寻找。
+- Spring通过`BeanDefinitionReader`来对这些信息进行处理。
+- `ApplicationContext`中，Spring已经为我们提供了一系列加载不同`Resource`的读取器的实现，而`DefaultListableBeanFactory`只是一个纯粹的IoC容器，需要为它配置特定的读取器才能完成这些功能。
+- `DefaultListableBeanFactory`这种更底层的容器，能**提高定制IoC容器的灵活性**。
 
-##### 流程
+##### Resource的继承关系
 
-**以DefaultListableBeanFactory为例。**
+![继承关系](image/image-20210902171010340-2797112.png ':size=40%')
+
+##### 资源定位流程
+
+!>以DefaultListableBeanFactory为例。
 
 - 定义一个`Resource`来定位容器使用的`BeanDefinition`。
 
-- ClassPathResource，这意味着Spring会在类路径中去寻找以文件形式存在的BeanDefinition信息。
+- `ClassPathResource`，意味着Spring会在**类路径中去寻找以文件形式存在的BeanDefinition信息**。
 
   ```java
   ClassPathResource res = new ClassPathResource("beans.xml");
@@ -205,7 +209,7 @@ Resource资源定位 --> BeanDefinition载入 --> 注册BeanDefinition
 
 - FileSystemXMLApplicationContext的继承体系
 
-![filesystemxml](image/spring-filesystemxml-2797112.png)
+![filesystemxml](image/spring-filesystemxml-2797112.png ':size=30%')
 
 - `FileSystemXmlApplicationContext`已经通过继承`AbstractApplicationContext`具备了`ResourceLoader`读入以Resource定义的BeanDefinition的能力，因为`AbstractApplicationContext`的基类是**`DefaultResourceLoader`**。
 
@@ -213,11 +217,11 @@ Resource资源定位 --> BeanDefinition载入 --> 注册BeanDefinition
 
 - **getResourceByPath**流程
 
-  ![getResourceByPath的调用过程](image/getResourceByPath%E7%9A%84%E8%B0%83%E7%94%A8%E8%BF%87%E7%A8%8B-2797112.png)
+  ![getResourceByPath的调用过程](image/getResourceByPath%E7%9A%84%E8%B0%83%E7%94%A8%E8%BF%87%E7%A8%8B-2797112.png ':size=80%')
 
-  - `AbstractRefreshableApplicationContext`的`refreshBeanFactory`方法的实现被`FileSystemXmlApplicationContext`构造函数中的`refresh`调用。
-  - 通过`createBeanFactroy`构建了一个IoC容器【DefaultListableBeanFactory】供`ApplicationContext`使用。
-  - `DefaultListableBeanFactory`启动了`loadBeanDefinitions`来载入`BeanDefinition`。
+  - `AbstractRefreshableApplicationContext`的`refreshBeanFactory`方法的实现被`FileSystemXmlApplicationContext`构造函数中的`refresh()`调用。
+  - 通过`createBeanFactroy()`构建了一个IoC容器`DefaultListableBeanFactory`供`ApplicationContext`使用。
+  - `DefaultListableBeanFactory`启动了`loadBeanDefinitions()`来载入`BeanDefinition`。
 
 - AbstractRefreshableApplicationContext对容器的初始化
 
@@ -258,26 +262,15 @@ Resource资源定位 --> BeanDefinition载入 --> 注册BeanDefinition
   }
   ```
 
-##### Resource的继承关系
-
-![继承关系](image/image-20210902171010340-2797112.png)
-
 
 #### BeanDefinition载入
 
->BeanDefinition，实际上就是POJO对象在IoC容器中的抽象，通过这个BeanDefinition定义的数据结构，使IoC容器能够方便地对POJO对象也就是Bean进行管理。
-
-- 把用户定义好的Bean表示成IoC容器内部的数据结构，而这个容器内部的数据结构就是BeanDefinition。
+- `BeanDefinition`，实际上就是**POJO对象在IoC容器中的抽象**，通过这个BeanDefinition定义的数据结构，使IoC容器能够方便地对POJO对象也就是Bean进行管理。
+- **把用户定义好的Bean表示成IoC容器内部的数据结构，而这个容器内部的数据结构就是BeanDefinition**。
 
 #### 注册BeanDefinition
 
->这里说的注册初始化过程，不包括Bean依赖注入的实现。
->
->在Spring IoC容器的设计中，Bean定义的载入和依赖注入是两个独立的过程。
->
->依赖注入一般发生在应用第一次通过getBean向容器索取Bean的时候。
->
->有一个例外值得注意，在使用IoC容器时有一个预实例化的配置，通过这个预实例化的配置——`lazyinit`。
+!>这里说的注册初始化过程，**不包括Bean依赖注入的实现**。在Spring IoC容器的设计中，**Bean定义的载入**和**依赖注入**是两个独立的过程。**依赖注入一般发生在应用第一次通过getBean向容器索取Bean的时候**。
 
 - 通过调用`BeanDefinitionRegistry`接口的实现来完成的。
 - 把载入过程中解析得到的`BeanDefinition`向IoC容器进行注册。
