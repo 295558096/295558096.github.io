@@ -21,6 +21,8 @@
 
 ## 基于Xml的配置
 
+[官方网站](https://dubbo.apache.org/zh/docs/references/xml/)
+
 ### 标签简介
 
 | 标签                  | 用途         | 解释                                                         |
@@ -63,6 +65,43 @@
 
   定义传输协议和默认端口。
 
+- `<dubbo:service/>`
+
+  | version     | 版本号                                              |
+  | ----------- | --------------------------------------------------- |
+  | scope       | 服务可见性，值为：local 或者 remote，默认为remote。 |
+  | actives     | 最大的激活的请求数。                                |
+  | async       | 方法调用是否异步，默认为false。                     |
+  | cache       | 服务缓存，可选值：lru/threadlocal/jcache。          |
+  | callbacks   | callback实例的限制。                                |
+  | generic     | 泛化调用，可以绕过。                                |
+  | class       | Service的实现的类名。                               |
+  | connections | 这个服务里的连接数。                                |
+  | delay       | 发布服务延迟的毫秒数。                              |
+  | executes    | 服务执行的请求上限。                                |
+  | retries     | 超时重试次数。                                      |
+  | timeout     | 调用超时时间。                                      |
+
+- `<dubbo:method/>`
+
+  作为`<dubbo:service/>`的子元素，它可以针对方法进行配置。
+
+  | 属性名   | 说明               |
+  | -------- | ------------------ |
+  | executes | 服务执行的请求上限 |
+  | retries  | 超时重试次数       |
+  | timeout  | 调用超时时间       |
+
+...
+
+### 属性覆盖策略
+
+- 下图展示了配置覆盖关系的优先级，从上到下优先级依次降低。
+
+![configuration](image/configuration.jpg)
+
+- [属性覆盖官方文档](https://dubbo.apache.org/zh/docs/references/configuration/properties/#%E5%B1%9E%E6%80%A7%E8%A6%86%E7%9B%96)
+
 ## 服务提供者
 
 ### 实现接口
@@ -87,7 +126,26 @@ public class DemoServiceImpl implements DemoService {
 }
 ```
 
+### 指定应用名称
 
+```xml
+    <!--配置应用名-->
+    <dubbo:application name="demo-provider"/>
+```
+
+### 指定注册中心的位置
+
+```xml
+    <!--配置注册中心-->
+    <dubbo:registry address="zookeeper://127.0.0.1:2181"/>
+```
+
+### 配置服务协议
+
+```xml
+    <!--配置服务协议-->
+    <dubbo:protocol name="dubbo" port="20880"/>
+```
 
 ### 暴露服务(XML)
 
@@ -96,9 +154,54 @@ public class DemoServiceImpl implements DemoService {
 <dubbo:service serialization="protobuf" interface="org.apache.dubbo.demo.DemoService" ref="demoServiceImpl"/>
 ```
 
-### 
-
 ## 服务消费者
 
-xxx
+### 指定应用名称
+
+```xml
+    <!--配置应用名-->
+    <dubbo:application name="demo-provider"/>
+```
+
+### 指定注册中心的位置
+
+```xml
+    <!--配置注册中心-->
+    <dubbo:registry address="zookeeper://127.0.0.1:2181"/>
+```
+
+### 配置服务协议
+
+```xml
+    <!--配置服务协议-->
+    <dubbo:protocol name="dubbo" port="20880"/>
+```
+
+### 订阅服务
+
+```java
+	<dubbo:reference id="demoService" check="false" interface="org.apache.dubbo.samples.basic.api.DemoService"/>
+```
+
+## 监控中心
+
+### 监控中心配置
+
+```xml
+<!--配置监控器：通过注册中心获取monitor地址后建立链接-->
+<dubbo:monitor protocal="registry"/>
+<!--配置监控器：绕过注册中心，直连monitor-->
+<dubbo:monitor address="dubbo://127.0.0.1:7070/xxxMonitorService"/>
+```
+
+### dubbo-admin
+
+- 图形化的服务管理页面。
+- 安装时需要指定注册中心地址，即可从注册中心中获取到所有的提供者/ 消费者进行配置管理。
+
+### dubbo-monitor-simple
+
+- 简单的监控中心。
+
+
 

@@ -6,3 +6,5 @@
 * [架构](/framework/dubbo/architecture)
 * [核心概念](/framework/dubbo/coreidea)
 * [HelloWorld](/framework/dubbo/helloworld)
+* [与SpringBoot整合](/framework/dubbo/springboot)
+* [配置](/framework/dubbo/config)
