@@ -262,11 +262,387 @@ Resource资源定位 --> BeanDefinition载入 --> 注册BeanDefinition
   }
   ```
 
-
 #### BeanDefinition载入
 
-- `BeanDefinition`，实际上就是**POJO对象在IoC容器中的抽象**，通过这个BeanDefinition定义的数据结构，使IoC容器能够方便地对POJO对象也就是Bean进行管理。
-- **把用户定义好的Bean表示成IoC容器内部的数据结构，而这个容器内部的数据结构就是BeanDefinition**。
+##### 概述
+
+- `BeanDefinition`，实际上就是**POJO对象在IoC容器中的抽象**，载入过程的任务是**把定义的BeanDefinition在IoC容器中转化成一个Spring内部表示的数据结构**。
+- IoC容器对Bean的**管理**和**依赖注入**功能的实现，是通过对其持有的`BeanDefinition`进行各种相关操作来完成的。
+- `BeanDefinition`数据在IoC容器中通过一个`HashMap`来**保持**和**维护**。
+
+##### 容器初始化流程分析
+
+>以DefaultListableBeanFactory为例。
+
+```mermaid
+graph LR
+BeanFactory容器初始化或重建 --> 注册Bean
+```
+
+
+
+- 容器的`refresh()`方法，是载入`BeanDefinition`的入口，涵盖了整个`ApplicationContext`的初始化过程。
+
+- `refresh()`方法分析
+
+  !> 经典问题
+
+  ```java
+  @Override
+  public void refresh() throws BeansException, IllegalStateException {
+    synchronized (this.startupShutdownMonitor) {
+      // Prepare this context for refreshing.
+      prepareRefresh();
+  
+      // 在子类中启动refreshBeanFactory()的地方
+      ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+  
+      // Prepare the bean factory for use in this context.
+      prepareBeanFactory(beanFactory);
+  
+      try {
+        // 设置BeanFactory的后置处理器
+        postProcessBeanFactory(beanFactory);
+  
+        // 调用BeanFactory的后置处理器，这些处理器是在Bean定义中向容器中注册过的
+        invokeBeanFactoryPostProcessors(beanFactory);
+  
+        // 注册Bean的后置处理器，在Bean创建过程中调用。
+        registerBeanPostProcessors(beanFactory);
+  
+        // 对上下文中的消息源进行初始化
+        initMessageSource();
+  
+        // 初始化上下文中的时间机制
+        initApplicationEventMulticaster();
+  
+        // 初始化其他特殊的Bean
+        onRefresh();
+  
+        // 检查监听Bean并且注册到容器中
+        registerListeners();
+  
+        // 实例化所有非延迟加载的Bean
+        finishBeanFactoryInitialization(beanFactory);
+  
+        // 发布容器事件，结束refresh()过程
+        finishRefresh();
+      }
+  
+      catch (BeansException ex) {
+        if (logger.isWarnEnabled()) {
+          logger.warn("Exception encountered during context initialization - " +
+                      "cancelling refresh attempt: " + ex);
+        }
+  
+        // 发生异常时，为防止Bean资源占用，在异常处理中，销毁已经在前面过程中生成的单例Bean
+        destroyBeans();
+  
+        // 重置标识位
+        cancelRefresh(ex);
+  
+        // Propagate exception to caller.
+        throw ex;
+      }
+  
+      finally {
+        // Reset common introspection caches in Spring's core, since we
+        // might not ever need metadata for singleton beans anymore...
+        resetCommonCaches();
+      }
+    }
+  }
+  ```
+
+##### 刷新BeanFactory
+
+> 以AbstractRefreshableApplicationContext的refreshBeanFactory()为例。
+
+- `refreshBeanFactory()`方法中创建了`BeanFactory`。
+
+- 在创建IoC容器前，如果已经有容器存在，那么需要**把已有的容器销毁和关闭**，保证在refresh以后使用的是新建立起来的IoC容器。
+
+- 在建立好当前的IoC容器以后，开始了对容器的初始化过程。
+
+- `loadBeanDefinitions()`是一个抽象的方法，具体的实现交给子类，是Spring中常见的**模板方法**模式。
+
+- 流程分析
+
+  ```mermaid
+  sequenceDiagram
+  participant aac as AbstractApplicationContext
+  participant arac as AbstractRefreshableApplicationContext
+  participant dlbf as DefaultListableBeanFactory
+  participant xbdr as XmlBeanDefintionReader
+  participant bdpd as BeanDefintionParserDelegate
+  aac ->> arac: refresh()
+  arac ->> dlbf: createBeanFactory()
+  arac ->> xbdr: loadBeanDefintions()
+  xbdr ->> bdpd: parseBeanDefinitionElement()
+  bdpd -->> aac: 结束
+  ```
+
+  
+
+- refreshBeanFactory()
+
+  ```java
+  @Override
+  protected final void refreshBeanFactory() throws BeansException {
+    // 销毁关闭现有的容器
+    if (hasBeanFactory()) {
+      destroyBeans();
+      closeBeanFactory();
+    }
+    try {
+      // 创建IoC容器，这里使用的是DefaultListableBeanFactory
+      DefaultListableBeanFactory beanFactory = createBeanFactory();
+      beanFactory.setSerializationId(getId());
+      customizeBeanFactory(beanFactory);
+      // 启动对BeanDefintion的载入
+      loadBeanDefinitions(beanFactory);
+      synchronized (this.beanFactoryMonitor) {
+        this.beanFactory = beanFactory;
+      }
+    }
+    catch (IOException ex) {
+      throw new ApplicationContextException("I/O error parsing bean definition source for " + getDisplayName(), ex);
+    }
+  }
+  ```
+
+- AbstractXmlApplicationContext中loadBeanDefinitions()的实现
+
+  ```java
+  @Override
+  protected void loadBeanDefinitions(DefaultListableBeanFactory beanFactory) throws BeansException, IOException {
+  
+    // 创建XmlBeanDefinitionReader，并通过回调设置到BeanFactory中去，创建BeanFactory的过程可以				// 参考上文对编程式使用IoC容器的相关分析，这里和前面一样，使用的也是DefaultListableBeanFactory
+    XmlBeanDefinitionReader beanDefinitionReader = new XmlBeanDefinitionReader(beanFactory);
+  
+    // Configure the bean definition reader with this context's
+    // resource loading environment.
+    beanDefinitionReader.setEnvironment(this.getEnvironment());
+    // 设置XmlBeanDefinitionReader，为XmlBeanDefinitionReader配ResourceLoader
+    beanDefinitionReader.setResourceLoader(this);
+    beanDefinitionReader.setEntityResolver(new ResourceEntityResolver(this));
+  
+    // 启动Bean定义信息载入的过程
+    initBeanDefinitionReader(beanDefinitionReader);
+    loadBeanDefinitions(beanDefinitionReader);
+  }
+  
+  protected void loadBeanDefinitions(XmlBeanDefinitionReader reader) throws IOException {
+    // 以String的形式获得配置文件的位置
+    String[] configLocations = getConfigLocations();
+    if (configLocations != null) {
+      for (String configLocation : configLocations) {
+        reader.loadBeanDefinitions(configLocation);
+      }
+    }
+  }
+  ```
+
+- AbstractBeanDefinitionReader的loadBeanDefinitions()
+
+  >方法用于载入BeanDefinition
+
+  ```java
+  	@Override
+  	public int loadBeanDefinitions(Resource... resources) throws BeanDefinitionStoreException {
+          // 非空判断
+  		Assert.notNull(resources, "Resource array must not be null");
+  		int count = 0;
+  	    // 循环遍历加载BeanDefinition
+  		for (Resource resource : resources) {
+        		// loadBeanDefinitions接口方法在子类中实现，抽象类AbstractBeanDefinitionReader中没有实现。
+  			count += loadBeanDefinitions(resource);
+  		}
+  		return count;
+  	}
+  ```
+
+- XmlBeanDefinitionReader的loadBeanDefinitions()
+
+  >是XmlBeanDefinitionReader对抽象父类中未实现的接口方法做的具体实现，解析Xml的XmlBeanDefinition。
+
+  ```java
+  	// 	方法入口，传入解码后的资源对象，解析xml并加载Definitions
+  	public int loadBeanDefinitions(EncodedResource encodedResource) throws BeanDefinitionStoreException {
+  		Assert.notNull(encodedResource, "EncodedResource must not be null");
+  		if (logger.isTraceEnabled()) {
+  			logger.trace("Loading XML bean definitions from " + encodedResource);
+  		}
+  
+  		Set<EncodedResource> currentResources = this.resourcesCurrentlyBeingLoaded.get();
+  
+  		if (!currentResources.add(encodedResource)) {
+  			throw new BeanDefinitionStoreException(
+  					"Detected cyclic loading of " + encodedResource + " - check your import definitions!");
+  		}
+  		// 得到XML文件，并得到IO的InputSource准备进行读取
+  		try (InputStream inputStream = encodedResource.getResource().getInputStream()) {
+  			InputSource inputSource = new InputSource(inputStream);
+  			if (encodedResource.getEncoding() != null) {
+  				inputSource.setEncoding(encodedResource.getEncoding());
+  			}
+  			return doLoadBeanDefinitions(inputSource, encodedResource.getResource());
+  		}
+  		catch (IOException ex) {
+  			throw new BeanDefinitionStoreException(
+  					"IOException parsing XML document from " + encodedResource.getResource(), ex);
+  		}
+  		finally {
+  			currentResources.remove(encodedResource);
+  			if (currentResources.isEmpty()) {
+  				this.resourcesCurrentlyBeingLoaded.remove();
+  			}
+  		}
+  	}
+  	// 真正的加载解析工作
+  	protected int doLoadBeanDefinitions(InputSource inputSource, Resource resource)
+  			throws BeanDefinitionStoreException {
+  
+  		try {
+  		     // 获取到xml文档结构
+  			Document doc = doLoadDocument(inputSource, resource);
+  		     // 解析并注册Bean
+  			int count = registerBeanDefinitions(doc, resource);
+  			if (logger.isDebugEnabled()) {
+  				logger.debug("Loaded " + count + " bean definitions from " + resource);
+  			}
+  			return count;
+  		}
+  		catch (BeanDefinitionStoreException ex) {
+  			throw ex;
+  		}
+  		catch (SAXParseException ex) {
+  			throw new XmlBeanDefinitionStoreException(resource.getDescription(),
+  					"Line " + ex.getLineNumber() + " in XML document from " + resource + " is invalid", ex);
+  		}
+  		catch (SAXException ex) {
+  			throw new XmlBeanDefinitionStoreException(resource.getDescription(),
+  					"XML document from " + resource + " is invalid", ex);
+  		}
+  		catch (ParserConfigurationException ex) {
+  			throw new BeanDefinitionStoreException(resource.getDescription(),
+  					"Parser configuration exception parsing XML from " + resource, ex);
+  		}
+  		catch (IOException ex) {
+  			throw new BeanDefinitionStoreException(resource.getDescription(),
+  					"IOException parsing XML document from " + resource, ex);
+  		}
+  		catch (Throwable ex) {
+  			throw new BeanDefinitionStoreException(resource.getDescription(),
+  					"Unexpected exception parsing XML document from " + resource, ex);
+  		}
+  	}
+  	// 注册BeanDefinition
+  	public int registerBeanDefinitions(Document doc, Resource resource) throws BeanDefinitionStoreException {
+      	// 获取解析器
+  		BeanDefinitionDocumentReader documentReader = createBeanDefinitionDocumentReader();
+  		int countBefore = getRegistry().getBeanDefinitionCount();
+      	// 使用解析器解析BeanDefinition并注册
+  		documentReader.registerBeanDefinitions(doc, createReaderContext(resource));
+  		return getRegistry().getBeanDefinitionCount() - countBefore;
+  	}
+  ```
+
+- DefaultBeanDefinitionDocumentReader的processBeanDefinition()
+
+  !> 重点
+
+  - 具体的Spring BeanDefinition的解析是在`BeanDefinitionParserDelegate`中完成的。
+
+  ```java
+  protected void processBeanDefinition(Element ele, BeanDefinitionParserDelegate delegate) {
+    	// BeanDefinitionHolder是BeanDefinition对象的封装类，封装了“BeanDefinition, Bean的名字和别名。用它	  // 来完成向IoC容器注册。
+  		BeanDefinitionHolder bdHolder = delegate.parseBeanDefinitionElement(ele);
+  		if (bdHolder != null) {
+  			bdHolder = delegate.decorateBeanDefinitionIfRequired(ele, bdHolder);
+  			try {
+  				// 向IoC容器注册解析得到BeanDefinition
+  				BeanDefinitionReaderUtils.registerBeanDefinition(bdHolder, getReaderContext().getRegistry());
+  			}
+  			catch (BeanDefinitionStoreException ex) {
+  				getReaderContext().error("Failed to register bean definition with name '" +
+  						bdHolder.getBeanName() + "'", ele, ex);
+  			}
+        	   // 在BeanDefinition向IoC容器注册完以后，发送消息
+  			getReaderContext().fireComponentRegistered(new BeanComponentDefinition(bdHolder));
+  		}
+  	}
+  ```
+
+- BeanDefinitionParserDelegate的parseBeanDefinitionElement()
+
+  - 封装了对Xml中各个节点的解析处理过程，比如bean标签的id、name等属性。
+
+  - 对Bean元素的详细解析
+
+    ```java
+    AbstractBeanDefinition beanDefinition = parseBeanDefinitionElement(ele, beanName, containingBean);
+    ```
+
+    ```java
+    // 并不真正的实例化就是将Xml中的bean定义转换成对象。
+    @Nullable
+    	public AbstractBeanDefinition parseBeanDefinitionElement(
+    			Element ele, String beanName, @Nullable BeanDefinition containingBean) {
+    
+    		this.parseState.push(new BeanEntry(beanName));
+    
+    		String className = null;
+        	// 获取className
+    		if (ele.hasAttribute(CLASS_ATTRIBUTE)) {
+    			className = ele.getAttribute(CLASS_ATTRIBUTE).trim();
+    		}
+    		String parent = null;
+    		if (ele.hasAttribute(PARENT_ATTRIBUTE)) {
+    			parent = ele.getAttribute(PARENT_ATTRIBUTE);
+    		}
+    
+    		try {
+          	  // 生成需要的BeanDefinition对象，为Bean定义信息的载入做准备
+    			AbstractBeanDefinition bd = createBeanDefinition(className, parent);
+    			// 对当前的Bean元素进行属性解析，并设置description的信息
+    			parseBeanDefinitionAttributes(ele, beanName, containingBean, bd);
+    			bd.setDescription(DomUtils.getChildElementValueByTagName(ele, DESCRIPTION_ELEMENT));
+    			// 对各种＜bean＞元素的信息进行解析
+    			parseMetaElements(ele, bd);
+    			parseLookupOverrideSubElements(ele, bd.getMethodOverrides());
+    			parseReplacedMethodSubElements(ele, bd.getMethodOverrides());
+    			// 解析构造函数
+    			parseConstructorArgElements(ele, bd);
+                 // 解析＜bean＞的property设置
+    			parsePropertyElements(ele, bd);
+    			parseQualifierElements(ele, bd);
+    
+    			bd.setResource(this.readerContext.getResource());
+    			bd.setSource(extractSource(ele));
+    
+    			return bd;
+    		}
+    		catch (ClassNotFoundException ex) {
+    			error("Bean class [" + className + "] not found", ele, ex);
+    		}
+    		catch (NoClassDefFoundError err) {
+    			error("Class that bean class [" + className + "] depends on not found", ele, err);
+    		}
+    		catch (Throwable ex) {
+    			error("Unexpected failure during bean definition parsing", ele, ex);
+    		}
+    		finally {
+    			this.parseState.pop();
+    		}
+    
+    		return null;
+    	}
+    ```
+
+    
+
+  - `AbstractBeanDefinition`类中封装了Bean的绝大多数属性。
 
 #### 注册BeanDefinition
 
