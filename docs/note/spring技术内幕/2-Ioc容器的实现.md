@@ -1049,12 +1049,15 @@ bdr -->> dlbf:end
 protected Object doCreateBean(final String beanName, final RootBeanDefinition mbd, final @Nullable Object[] args)
 			throws BeanCreationException {
 
-		// Instantiate the bean.
+  	   // 持有创建出来的Bean对象
 		BeanWrapper instanceWrapper = null;
 		if (mbd.isSingleton()) {
+             // 如果是Singleton，先把缓存中的同名Bean清除
 			instanceWrapper = this.factoryBeanInstanceCache.remove(beanName);
 		}
 		if (instanceWrapper == null) {
+      	  // 创建Bean的地方，由createBeanInstance来完成
+      	  // 依赖注入重点方法1
 			instanceWrapper = createBeanInstance(beanName, mbd, args);
 		}
 		final Object bean = instanceWrapper.getWrappedInstance();
@@ -1089,9 +1092,10 @@ protected Object doCreateBean(final String beanName, final RootBeanDefinition mb
 			addSingletonFactory(beanName, () -> getEarlyBeanReference(beanName, mbd, bean));
 		}
 
-		// Initialize the bean instance.
+		// 对Bean的初始化，依赖注入往往在这里发生，exposedObject在初始化处理完以后会，返回作为依赖注入完成后的Bean
 		Object exposedObject = bean;
 		try {
+      	  // 依赖注入重点方法2
 			populateBean(beanName, mbd, instanceWrapper);
 			exposedObject = initializeBean(beanName, exposedObject, mbd);
 		}
@@ -1142,6 +1146,175 @@ protected Object doCreateBean(final String beanName, final RootBeanDefinition mb
 		}
 
 		return exposedObject;
+	}
+```
+
+与**依赖注入**关系特别密切的方法有`createBeanInstance()`和`populateBean()`。
+
+```java
+	protected BeanWrapper createBeanInstance(String beanName, RootBeanDefinition mbd, @Nullable Object[] args) {
+		// 确认需要创建的Bean实例的类可以实例化
+		Class<?> beanClass = resolveBeanClass(mbd, beanName);
+
+		if (beanClass != null && !Modifier.isPublic(beanClass.getModifiers()) && !mbd.isNonPublicAccessAllowed()) {
+			throw new BeanCreationException(mbd.getResourceDescription(), beanName,
+					"Bean class isn't public, and non-public access not allowed: " + beanClass.getName());
+		}
+
+		Supplier<?> instanceSupplier = mbd.getInstanceSupplier();
+    	// 通过实例提供者实例化Bean
+		if (instanceSupplier != null) {
+			return obtainFromSupplier(instanceSupplier, beanName);
+		}
+
+    	// 通过工厂方法实例化Bean
+		if (mbd.getFactoryMethodName() != null) {
+			return instantiateUsingFactoryMethod(beanName, mbd, args);
+		}
+
+		// Shortcut when re-creating the same bean...
+		boolean resolved = false;
+		boolean autowireNecessary = false;
+		if (args == null) {
+			synchronized (mbd.constructorArgumentLock) {
+				if (mbd.resolvedConstructorOrFactoryMethod != null) {
+					resolved = true;
+					autowireNecessary = mbd.constructorArgumentsResolved;
+				}
+			}
+		}
+		if (resolved) {
+			if (autowireNecessary) {
+				return autowireConstructor(beanName, mbd, null, null);
+			}
+			else {
+				return instantiateBean(beanName, mbd);
+			}
+		}
+
+		// 通过构造函数实例化
+		Constructor<?>[] ctors = determineConstructorsFromBeanPostProcessors(beanClass, beanName);
+		if (ctors != null || mbd.getResolvedAutowireMode() == AUTOWIRE_CONSTRUCTOR ||
+				mbd.hasConstructorArgumentValues() || !ObjectUtils.isEmpty(args)) {
+			return autowireConstructor(beanName, mbd, ctors, args);
+		}
+
+		// Preferred constructors for default construction?
+		ctors = mbd.getPreferredConstructors();
+		if (ctors != null) {
+			return autowireConstructor(beanName, mbd, ctors, null);
+		}
+
+		// 使用默认无参构造函数实例化
+		return instantiateBean(beanName, mbd);
+	}
+	
+	// 最常见的实例化过程instantiateBean
+	protected BeanWrapper instantiateBean(final String beanName, final RootBeanDefinition mbd) {
+		try {
+			Object beanInstance;
+			final BeanFactory parent = this;
+			if (System.getSecurityManager() != null) {
+				beanInstance = AccessController.doPrivileged((PrivilegedAction<Object>) () ->
+						getInstantiationStrategy().instantiate(mbd, beanName, parent),
+						getAccessControlContext());
+			}
+			else {
+        		// 使用默认的CGlib实例化对象
+				beanInstance = getInstantiationStrategy().instantiate(mbd, beanName, parent);
+			}
+			BeanWrapper bw = new BeanWrapperImpl(beanInstance);
+			initBeanWrapper(bw);
+			return bw;
+		}
+		catch (Throwable ex) {
+			throw new BeanCreationException(
+					mbd.getResourceDescription(), beanName, "Instantiation of bean failed", ex);
+		}
+	}
+```
+
+>CGLIB是一个常用的字节码生成器的类库，它提供了一系列的API来提供生成和转换Java的字节码的功能。在Spring AOP中也使用CGLIB对Java的字节码进行增强。
+
+```java
+// 填充属性
+protected void populateBean(String beanName, RootBeanDefinition mbd, @Nullable BeanWrapper bw) {
+		if (bw == null) {
+			if (mbd.hasPropertyValues()) {
+				throw new BeanCreationException(
+						mbd.getResourceDescription(), beanName, "Cannot apply property values to null instance");
+			}
+			else {
+				// Skip property population phase for null instance.
+				return;
+			}
+		}
+
+		// Give any InstantiationAwareBeanPostProcessors the opportunity to modify the
+		// state of the bean before properties are set. This can be used, for example,
+		// to support styles of field injection.
+		if (!mbd.isSynthetic() && hasInstantiationAwareBeanPostProcessors()) {
+			for (BeanPostProcessor bp : getBeanPostProcessors()) {
+				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+					if (!ibp.postProcessAfterInstantiation(bw.getWrappedInstance(), beanName)) {
+						return;
+					}
+				}
+			}
+		}
+
+		PropertyValues pvs = (mbd.hasPropertyValues() ? mbd.getPropertyValues() : null);
+
+		int resolvedAutowireMode = mbd.getResolvedAutowireMode();
+		if (resolvedAutowireMode == AUTOWIRE_BY_NAME || resolvedAutowireMode == AUTOWIRE_BY_TYPE) {
+			MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+			// Add property values based on autowire by name if applicable.
+			if (resolvedAutowireMode == AUTOWIRE_BY_NAME) {
+				autowireByName(beanName, mbd, bw, newPvs);
+			}
+			// Add property values based on autowire by type if applicable.
+			if (resolvedAutowireMode == AUTOWIRE_BY_TYPE) {
+				autowireByType(beanName, mbd, bw, newPvs);
+			}
+			pvs = newPvs;
+		}
+
+		boolean hasInstAwareBpps = hasInstantiationAwareBeanPostProcessors();
+		boolean needsDepCheck = (mbd.getDependencyCheck() != AbstractBeanDefinition.DEPENDENCY_CHECK_NONE);
+
+		PropertyDescriptor[] filteredPds = null;
+		if (hasInstAwareBpps) {
+			if (pvs == null) {
+				pvs = mbd.getPropertyValues();
+			}
+			for (BeanPostProcessor bp : getBeanPostProcessors()) {
+				if (bp instanceof InstantiationAwareBeanPostProcessor) {
+					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
+					PropertyValues pvsToUse = ibp.postProcessProperties(pvs, bw.getWrappedInstance(), beanName);
+					if (pvsToUse == null) {
+						if (filteredPds == null) {
+							filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+						}
+						pvsToUse = ibp.postProcessPropertyValues(pvs, filteredPds, bw.getWrappedInstance(), beanName);
+						if (pvsToUse == null) {
+							return;
+						}
+					}
+					pvs = pvsToUse;
+				}
+			}
+		}
+		if (needsDepCheck) {
+			if (filteredPds == null) {
+				filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+			}
+			checkDependencies(beanName, mbd, filteredPds, pvs);
+		}
+
+		if (pvs != null) {
+			applyPropertyValues(beanName, mbd, bw, pvs);
+		}
 	}
 ```
 
