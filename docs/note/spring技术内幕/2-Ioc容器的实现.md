@@ -1267,13 +1267,14 @@ protected void populateBean(String beanName, RootBeanDefinition mbd, @Nullable B
 		PropertyValues pvs = (mbd.hasPropertyValues() ? mbd.getPropertyValues() : null);
 
 		int resolvedAutowireMode = mbd.getResolvedAutowireMode();
+  	// 进行依赖注入过程，先处理autowire的注入
 		if (resolvedAutowireMode == AUTOWIRE_BY_NAME || resolvedAutowireMode == AUTOWIRE_BY_TYPE) {
 			MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
-			// Add property values based on autowire by name if applicable.
+			// 根据BeanName注入
 			if (resolvedAutowireMode == AUTOWIRE_BY_NAME) {
 				autowireByName(beanName, mbd, bw, newPvs);
 			}
-			// Add property values based on autowire by type if applicable.
+			// 根据BeanType注入
 			if (resolvedAutowireMode == AUTOWIRE_BY_TYPE) {
 				autowireByType(beanName, mbd, bw, newPvs);
 			}
@@ -1288,6 +1289,7 @@ protected void populateBean(String beanName, RootBeanDefinition mbd, @Nullable B
 			if (pvs == null) {
 				pvs = mbd.getPropertyValues();
 			}
+      // 调用初始化后置处理器
 			for (BeanPostProcessor bp : getBeanPostProcessors()) {
 				if (bp instanceof InstantiationAwareBeanPostProcessor) {
 					InstantiationAwareBeanPostProcessor ibp = (InstantiationAwareBeanPostProcessor) bp;
@@ -1313,8 +1315,600 @@ protected void populateBean(String beanName, RootBeanDefinition mbd, @Nullable B
 		}
 
 		if (pvs != null) {
+      // 属性注入
 			applyPropertyValues(beanName, mbd, bw, pvs);
 		}
 	}
+
+/**
+ * 注入属性
+ */
+protected void applyPropertyValues(String beanName, BeanDefinition mbd, BeanWrapper bw, PropertyValues pvs) {
+		if (pvs.isEmpty()) {
+			return;
+		}
+
+		if (System.getSecurityManager() != null && bw instanceof BeanWrapperImpl) {
+			((BeanWrapperImpl) bw).setSecurityContext(getAccessControlContext());
+		}
+
+		MutablePropertyValues mpvs = null;
+		List<PropertyValue> original;
+
+		if (pvs instanceof MutablePropertyValues) {
+			mpvs = (MutablePropertyValues) pvs;
+			if (mpvs.isConverted()) {
+				// Shortcut: use the pre-converted values as-is.
+				try {
+					bw.setPropertyValues(mpvs);
+					return;
+				}
+				catch (BeansException ex) {
+					throw new BeanCreationException(
+							mbd.getResourceDescription(), beanName, "Error setting property values", ex);
+				}
+			}
+			original = mpvs.getPropertyValueList();
+		}
+		else {
+			original = Arrays.asList(pvs.getPropertyValues());
+		}
+
+		TypeConverter converter = getCustomTypeConverter();
+		if (converter == null) {
+			converter = bw;
+		}
+    // BeanDefinitionValueResolver对BeanDefinition的解析是在这个valueResolver中完成的
+		BeanDefinitionValueResolver valueResolver = new BeanDefinitionValueResolver(this, beanName, mbd, converter);
+
+		// 为解析值创建一个副本，副本的数据将会被注入到Bean中
+		List<PropertyValue> deepCopy = new ArrayList<>(original.size());
+		boolean resolveNecessary = false;
+		for (PropertyValue pv : original) {
+			if (pv.isConverted()) {
+				deepCopy.add(pv);
+			}
+			else {
+				String propertyName = pv.getName();
+				Object originalValue = pv.getValue();
+				if (originalValue == AutowiredPropertyMarker.INSTANCE) {
+					Method writeMethod = bw.getPropertyDescriptor(propertyName).getWriteMethod();
+					if (writeMethod == null) {
+						throw new IllegalArgumentException("Autowire marker for property without write method: " + pv);
+					}
+					originalValue = new DependencyDescriptor(new MethodParameter(writeMethod, 0), true);
+				}
+				Object resolvedValue = valueResolver.resolveValueIfNecessary(pv, originalValue);
+				Object convertedValue = resolvedValue;
+				boolean convertible = bw.isWritableProperty(propertyName) &&
+						!PropertyAccessorUtils.isNestedOrIndexedProperty(propertyName);
+				if (convertible) {
+					convertedValue = convertForProperty(resolvedValue, propertyName, bw, converter);
+				}
+				// Possibly store converted value in merged bean definition,
+				// in order to avoid re-conversion for every created bean instance.
+				if (resolvedValue == originalValue) {
+					if (convertible) {
+						pv.setConvertedValue(convertedValue);
+					}
+					deepCopy.add(pv);
+				}
+				else if (convertible && originalValue instanceof TypedStringValue &&
+						!((TypedStringValue) originalValue).isDynamic() &&
+						!(convertedValue instanceof Collection || ObjectUtils.isArray(convertedValue))) {
+					pv.setConvertedValue(convertedValue);
+					deepCopy.add(pv);
+				}
+				else {
+					resolveNecessary = true;
+					deepCopy.add(new PropertyValue(pv, convertedValue));
+				}
+			}
+		}
+		if (mpvs != null && !resolveNecessary) {
+			mpvs.setConverted();
+		}
+
+		// Set our (possibly massaged) deep copy.
+		try {
+      // 依赖注入发生的地方，会在BeanWrapperImpl中完成
+			bw.setPropertyValues(new MutablePropertyValues(deepCopy));
+		}
+		catch (BeansException ex) {
+			throw new BeanCreationException(
+					mbd.getResourceDescription(), beanName, "Error setting property values", ex);
+		}
+	}
 ```
+
+通过使用BeanDefinitionResolver来对BeanDefinition进行解析。
+
+```java
+private Object resolveReference(Object argName, RuntimeBeanReference ref) {
+  try {
+    Object bean;
+    // 获取reference的名字，名字是在载入BeanDefinition时候根据配置生成
+    Class<?> beanType = ref.getBeanType();
+    // 如果ref在双亲Ioc容器中，那么就到双亲的Ioc中去获取
+    if (ref.isToParent()) {
+      BeanFactory parent = this.beanFactory.getParentBeanFactory();
+      if (parent == null) {
+        throw new BeanCreationException(
+          this.beanDefinition.getResourceDescription(), this.beanName,
+          "Cannot resolve reference to bean " + ref +
+          " in parent factory: no parent factory available");
+      }
+      if (beanType != null) {
+        bean = parent.getBean(beanType);
+      }
+      else {
+        bean = parent.getBean(String.valueOf(doEvaluate(ref.getBeanName())));
+      }
+    }
+    else {
+      String resolvedName;
+      if (beanType != null) {
+        NamedBeanHolder<?> namedBean = this.beanFactory.resolveNamedBean(beanType);
+        bean = namedBean.getBeanInstance();
+        resolvedName = namedBean.getBeanName();
+      }
+      else {
+        resolvedName = String.valueOf(doEvaluate(ref.getBeanName()));
+        // 在当前容器中获取Bean，会触发依赖注入
+        bean = this.beanFactory.getBean(resolvedName);
+      }
+      this.beanFactory.registerDependentBean(resolvedName, this.beanName);
+    }
+    if (bean instanceof NullBean) {
+      bean = null;
+    }
+    return bean;
+  }
+  catch (BeansException ex) {
+    throw new BeanCreationException(
+      this.beanDefinition.getResourceDescription(), this.beanName,
+      "Cannot resolve reference to bean '" + ref.getBeanName() + "' while setting " + argName, ex);
+  }
+}
+```
+
+其他类型的属性进行注入的例子，比如array和list
+
+`org.springframework.beans.factory.support.BeanDefinitionValueResolve`
+
+```java
+/**
+ * 解析Array
+ */
+private Object resolveManagedArray(Object argName, List<?> ml, Class<?> elementType) {
+  Object resolved = Array.newInstance(elementType, ml.size());
+  for (int i = 0; i < ml.size(); i++) {
+    Array.set(resolved, i, resolveValueIfNecessary(new KeyedArgName(argName, i), ml.get(i)));
+  }
+  return resolved;
+}
+
+/**
+ * 解析List
+ */
+private List<?> resolveManagedList(Object argName, List<?> ml) {
+  List<Object> resolved = new ArrayList<>(ml.size());
+  for (int i = 0; i < ml.size(); i++) {
+    resolved.add(resolveValueIfNecessary(new KeyedArgName(argName, i), ml.get(i)));
+  }
+  return resolved;
+}
+```
+
+底层都调用了`org.springframework.beans.factory.support.BeanDefinitionValueResolver#resolveValueIfNecessary`。
+
+```java
+	@Nullable
+	/**
+		* 对RuntimeBeanReference进行解析，RuntimeBeanReference是对BeanDefinition进行解析时生成的数据对象
+		*/
+	public Object resolveValueIfNecessary(Object argName, @Nullable Object value) {
+    // 根据不同的实例类型，调用不同的方法进行解析
+		if (value instanceof RuntimeBeanReference) {
+			RuntimeBeanReference ref = (RuntimeBeanReference) value;
+			return resolveReference(argName, ref);
+		}
+		else if (value instanceof RuntimeBeanNameReference) {
+			String refName = ((RuntimeBeanNameReference) value).getBeanName();
+			refName = String.valueOf(doEvaluate(refName));
+			if (!this.beanFactory.containsBean(refName)) {
+				throw new BeanDefinitionStoreException(
+						"Invalid bean name '" + refName + "' in bean reference for " + argName);
+			}
+			return refName;
+		}
+		else if (value instanceof BeanDefinitionHolder) {
+			// Resolve BeanDefinitionHolder: contains BeanDefinition with name and aliases.
+			BeanDefinitionHolder bdHolder = (BeanDefinitionHolder) value;
+			return resolveInnerBean(argName, bdHolder.getBeanName(), bdHolder.getBeanDefinition());
+		}
+		else if (value instanceof BeanDefinition) {
+			// Resolve plain BeanDefinition, without contained name: use dummy name.
+			BeanDefinition bd = (BeanDefinition) value;
+			String innerBeanName = "(inner bean)" + BeanFactoryUtils.GENERATED_BEAN_NAME_SEPARATOR +
+					ObjectUtils.getIdentityHexString(bd);
+			return resolveInnerBean(argName, innerBeanName, bd);
+		}
+		else if (value instanceof DependencyDescriptor) {
+			Set<String> autowiredBeanNames = new LinkedHashSet<>(4);
+			Object result = this.beanFactory.resolveDependency(
+					(DependencyDescriptor) value, this.beanName, autowiredBeanNames, this.typeConverter);
+			for (String autowiredBeanName : autowiredBeanNames) {
+				if (this.beanFactory.containsBean(autowiredBeanName)) {
+					this.beanFactory.registerDependentBean(autowiredBeanName, this.beanName);
+				}
+			}
+			return result;
+		}
+		else if (value instanceof ManagedArray) {
+			// May need to resolve contained runtime references.
+			ManagedArray array = (ManagedArray) value;
+			Class<?> elementType = array.resolvedElementType;
+			if (elementType == null) {
+				String elementTypeName = array.getElementTypeName();
+				if (StringUtils.hasText(elementTypeName)) {
+					try {
+						elementType = ClassUtils.forName(elementTypeName, this.beanFactory.getBeanClassLoader());
+						array.resolvedElementType = elementType;
+					}
+					catch (Throwable ex) {
+						// Improve the message by showing the context.
+						throw new BeanCreationException(
+								this.beanDefinition.getResourceDescription(), this.beanName,
+								"Error resolving array type for " + argName, ex);
+					}
+				}
+				else {
+					elementType = Object.class;
+				}
+			}
+			return resolveManagedArray(argName, (List<?>) value, elementType);
+		}
+		else if (value instanceof ManagedList) {
+			// May need to resolve contained runtime references.
+			return resolveManagedList(argName, (List<?>) value);
+		}
+		else if (value instanceof ManagedSet) {
+			// May need to resolve contained runtime references.
+			return resolveManagedSet(argName, (Set<?>) value);
+		}
+		else if (value instanceof ManagedMap) {
+			// May need to resolve contained runtime references.
+			return resolveManagedMap(argName, (Map<?, ?>) value);
+		}
+		else if (value instanceof ManagedProperties) {
+			Properties original = (Properties) value;
+			Properties copy = new Properties();
+			original.forEach((propKey, propValue) -> {
+				if (propKey instanceof TypedStringValue) {
+					propKey = evaluate((TypedStringValue) propKey);
+				}
+				if (propValue instanceof TypedStringValue) {
+					propValue = evaluate((TypedStringValue) propValue);
+				}
+				if (propKey == null || propValue == null) {
+					throw new BeanCreationException(
+							this.beanDefinition.getResourceDescription(), this.beanName,
+							"Error converting Properties key/value pair for " + argName + ": resolved to null");
+				}
+				copy.put(propKey, propValue);
+			});
+			return copy;
+		}
+		else if (value instanceof TypedStringValue) {
+			// Convert value to target type here.
+			TypedStringValue typedStringValue = (TypedStringValue) value;
+			Object valueObject = evaluate(typedStringValue);
+			try {
+				Class<?> resolvedTargetType = resolveTargetType(typedStringValue);
+				if (resolvedTargetType != null) {
+					return this.typeConverter.convertIfNecessary(valueObject, resolvedTargetType);
+				}
+				else {
+					return valueObject;
+				}
+			}
+			catch (Throwable ex) {
+				// Improve the message by showing the context.
+				throw new BeanCreationException(
+						this.beanDefinition.getResourceDescription(), this.beanName,
+						"Error converting typed String value for " + argName, ex);
+			}
+		}
+		else if (value instanceof NullBean) {
+			return null;
+		}
+		else {
+			return evaluate(value);
+		}
+	}
+```
+
+对RuntimeBeanReference类型的注入在resolveReference。
+
+`org.springframework.beans.factory.support.BeanDefinitionValueResolver#resolveReference`
+
+```java
+@Nullable
+private Object resolveReference(Object argName, RuntimeBeanReference ref) {
+  try {
+    Object bean;
+    Class<?> beanType = ref.getBeanType();
+    // 在双亲Ioc容器中获取ref
+    if (ref.isToParent()) {
+      BeanFactory parent = this.beanFactory.getParentBeanFactory();
+      if (parent == null) {
+        throw new BeanCreationException(
+          this.beanDefinition.getResourceDescription(), this.beanName,
+          "Cannot resolve reference to bean " + ref +
+          " in parent factory: no parent factory available");
+      }
+      if (beanType != null) {
+        bean = parent.getBean(beanType);
+      }
+      else {
+        bean = parent.getBean(String.valueOf(doEvaluate(ref.getBeanName())));
+      }
+    }
+    else {
+      String resolvedName;
+      if (beanType != null) {
+        NamedBeanHolder<?> namedBean = this.beanFactory.resolveNamedBean(beanType);
+        bean = namedBean.getBeanInstance();
+        resolvedName = namedBean.getBeanName();
+      }
+      else {
+        resolvedName = String.valueOf(doEvaluate(ref.getBeanName()));
+        // 从当前容器中获取Bean，会触发依赖注入
+        bean = this.beanFactory.getBean(resolvedName);
+      }
+      this.beanFactory.registerDependentBean(resolvedName, this.beanName);
+    }
+    if (bean instanceof NullBean) {
+      bean = null;
+    }
+    return bean;
+  }
+  catch (BeansException ex) {
+    throw new BeanCreationException(
+      this.beanDefinition.getResourceDescription(), this.beanName,
+      "Cannot resolve reference to bean '" + ref.getBeanName() + "' while setting " + argName, ex);
+  }
+}
+```
+
+依赖注入的发生是在`BeanWrapper`的`setPropertyValues`中实现的，具体的完成却是在BeanWrapper的子类BeanWrapperImpl中实现的。
+
+```java
+@Override
+public void setPropertyValue(String propertyName, @Nullable Object value) throws BeansException {
+  AbstractNestablePropertyAccessor nestedPa;
+  try {
+    // 获取属性的路径信息
+    nestedPa = getPropertyAccessorForPropertyPath(propertyName);
+  }
+  catch (NotReadablePropertyException ex) {
+    throw new NotWritablePropertyException(getRootClass(), this.nestedPath + propertyName,
+                                           "Nested property in path '" + propertyName + "' does not exist", ex);
+  }
+  // 获取tokens
+  PropertyTokenHolder tokens = getPropertyNameTokens(getFinalPath(nestedPa, propertyName));
+  // 设置属性
+  nestedPa.setPropertyValue(tokens, new PropertyValue(propertyName, value));
+}
+```
+
+`org.springframework.beans.AbstractNestablePropertyAccessor#setPropertyValue`
+
+```java
+protected void setPropertyValue(PropertyTokenHolder tokens, PropertyValue pv) throws BeansException {
+  if (tokens.keys != null) {
+    processKeyedProperty(tokens, pv);
+  }
+  else {
+    processLocalProperty(tokens, pv);
+  }
+}
+
+/**
+ *设置秘钥属性
+ */
+private void processKeyedProperty(PropertyTokenHolder tokens, PropertyValue pv) {
+  Object propValue = getPropertyHoldingValue(tokens);
+  PropertyHandler ph = getLocalPropertyHandler(tokens.actualName);
+  if (ph == null) {
+    throw new InvalidPropertyException(
+      getRootClass(), this.nestedPath + tokens.actualName, "No property handler found");
+  }
+  Assert.state(tokens.keys != null, "No token keys");
+  String lastKey = tokens.keys[tokens.keys.length - 1];
+
+  if (propValue.getClass().isArray()) {
+    Class<?> requiredType = propValue.getClass().getComponentType();
+    int arrayIndex = Integer.parseInt(lastKey);
+    Object oldValue = null;
+    try {
+      if (isExtractOldValueForEditor() && arrayIndex < Array.getLength(propValue)) {
+        oldValue = Array.get(propValue, arrayIndex);
+      }
+      Object convertedValue = convertIfNecessary(tokens.canonicalName, oldValue, pv.getValue(),
+                                                 requiredType, ph.nested(tokens.keys.length));
+      int length = Array.getLength(propValue);
+      if (arrayIndex >= length && arrayIndex < this.autoGrowCollectionLimit) {
+        Class<?> componentType = propValue.getClass().getComponentType();
+        Object newArray = Array.newInstance(componentType, arrayIndex + 1);
+        System.arraycopy(propValue, 0, newArray, 0, length);
+        setPropertyValue(tokens.actualName, newArray);
+        propValue = getPropertyValue(tokens.actualName);
+      }
+      Array.set(propValue, arrayIndex, convertedValue);
+    }
+    catch (IndexOutOfBoundsException ex) {
+      throw new InvalidPropertyException(getRootClass(), this.nestedPath + tokens.canonicalName,
+                                         "Invalid array index in property path '" + tokens.canonicalName + "'", ex);
+    }
+  }
+
+  else if (propValue instanceof List) {
+    Class<?> requiredType = ph.getCollectionType(tokens.keys.length);
+    List<Object> list = (List<Object>) propValue;
+    int index = Integer.parseInt(lastKey);
+    Object oldValue = null;
+    if (isExtractOldValueForEditor() && index < list.size()) {
+      oldValue = list.get(index);
+    }
+    Object convertedValue = convertIfNecessary(tokens.canonicalName, oldValue, pv.getValue(),
+                                               requiredType, ph.nested(tokens.keys.length));
+    int size = list.size();
+    if (index >= size && index < this.autoGrowCollectionLimit) {
+      for (int i = size; i < index; i++) {
+        try {
+          list.add(null);
+        }
+        catch (NullPointerException ex) {
+          throw new InvalidPropertyException(getRootClass(), this.nestedPath + tokens.canonicalName,
+                                             "Cannot set element with index " + index + " in List of size " +
+                                             size + ", accessed using property path '" + tokens.canonicalName +
+                                             "': List does not support filling up gaps with null elements");
+        }
+      }
+      list.add(convertedValue);
+    }
+    else {
+      try {
+        list.set(index, convertedValue);
+      }
+      catch (IndexOutOfBoundsException ex) {
+        throw new InvalidPropertyException(getRootClass(), this.nestedPath + tokens.canonicalName,
+                                           "Invalid list index in property path '" + tokens.canonicalName + "'", ex);
+      }
+    }
+  }
+
+  else if (propValue instanceof Map) {
+    Class<?> mapKeyType = ph.getMapKeyType(tokens.keys.length);
+    Class<?> mapValueType = ph.getMapValueType(tokens.keys.length);
+    Map<Object, Object> map = (Map<Object, Object>) propValue;
+    // IMPORTANT: Do not pass full property name in here - property editors
+    // must not kick in for map keys but rather only for map values.
+    TypeDescriptor typeDescriptor = TypeDescriptor.valueOf(mapKeyType);
+    Object convertedMapKey = convertIfNecessary(null, null, lastKey, mapKeyType, typeDescriptor);
+    Object oldValue = null;
+    if (isExtractOldValueForEditor()) {
+      oldValue = map.get(convertedMapKey);
+    }
+    // Pass full property name and old value in here, since we want full
+    // conversion ability for map values.
+    Object convertedMapValue = convertIfNecessary(tokens.canonicalName, oldValue, pv.getValue(),
+                                                  mapValueType, ph.nested(tokens.keys.length));
+    map.put(convertedMapKey, convertedMapValue);
+  }
+
+  else {
+    throw new InvalidPropertyException(getRootClass(), this.nestedPath + tokens.canonicalName,
+                                       "Property referenced in indexed property path '" + tokens.canonicalName +
+                                       "' is neither an array nor a List nor a Map; returned value was [" + propValue + "]");
+  }
+}
+
+/**
+ * 处理本地属性
+ */
+private void processLocalProperty(PropertyTokenHolder tokens, PropertyValue pv) {
+  PropertyHandler ph = getLocalPropertyHandler(tokens.actualName);
+  if (ph == null || !ph.isWritable()) {
+    if (pv.isOptional()) {
+      if (logger.isDebugEnabled()) {
+        logger.debug("Ignoring optional value for property '" + tokens.actualName +
+                     "' - property not found on bean class [" + getRootClass().getName() + "]");
+      }
+      return;
+    }
+    else {
+      throw createNotWritablePropertyException(tokens.canonicalName);
+    }
+  }
+
+  Object oldValue = null;
+  try {
+    Object originalValue = pv.getValue();
+    Object valueToApply = originalValue;
+    if (!Boolean.FALSE.equals(pv.conversionNecessary)) {
+      if (pv.isConverted()) {
+        valueToApply = pv.getConvertedValue();
+      }
+      else {
+        if (isExtractOldValueForEditor() && ph.isReadable()) {
+          try {
+            oldValue = ph.getValue();
+          }
+          catch (Exception ex) {
+            if (ex instanceof PrivilegedActionException) {
+              ex = ((PrivilegedActionException) ex).getException();
+            }
+            if (logger.isDebugEnabled()) {
+              logger.debug("Could not read previous value of property '" +
+                           this.nestedPath + tokens.canonicalName + "'", ex);
+            }
+          }
+        }
+        valueToApply = convertForProperty(
+          tokens.canonicalName, oldValue, originalValue, ph.toTypeDescriptor());
+      }
+      pv.getOriginalPropertyValue().conversionNecessary = (valueToApply != originalValue);
+    }
+    ph.setValue(valueToApply);
+  }
+  catch (TypeMismatchException ex) {
+    throw ex;
+  }
+  catch (InvocationTargetException ex) {
+    PropertyChangeEvent propertyChangeEvent = new PropertyChangeEvent(
+      getRootInstance(), this.nestedPath + tokens.canonicalName, oldValue, pv.getValue());
+    if (ex.getTargetException() instanceof ClassCastException) {
+      throw new TypeMismatchException(propertyChangeEvent, ph.getPropertyType(), ex.getTargetException());
+    }
+    else {
+      Throwable cause = ex.getTargetException();
+      if (cause instanceof UndeclaredThrowableException) {
+        // May happen e.g. with Groovy-generated methods
+        cause = cause.getCause();
+      }
+      throw new MethodInvocationException(propertyChangeEvent, cause);
+    }
+  }
+  catch (Exception ex) {
+    PropertyChangeEvent pce = new PropertyChangeEvent(
+      getRootInstance(), this.nestedPath + tokens.canonicalName, oldValue, pv.getValue());
+    throw new MethodInvocationException(pce, ex);
+  }
+}
+```
+
+##### 小结
+
+- Bean的创建和对象依赖注入的过程中，需要依据`BeanDefinition`中的信息来递归地完成依赖注入。
+
+
+- Bean对象创建和依赖注入的入口都是`getBean()`方法。
+- 整个注册和注入的过程中会出现递归调用。
+  - 在上下文体系中查找需要的Bean和创建Bean的递归调用。
+  - 在依赖注入时，通过递归调用容器的getBean方法，得到当前Bean的依赖Bean，同时也触发对依赖Bean的创建和注入。
+  - 在对Bean的属性进行依赖注入时，解析的过程也是一个递归的过程。
+
+
+#### 容器其他相关特性的设计与实现
+
+##### ApplicationContext和Bean的初始化及销毁
+
+![未命名文件](image/%E6%9C%AA%E5%91%BD%E5%90%8D%E6%96%87%E4%BB%B6.png)
+
+`ApplicationContext`启动的过程是在`AbstractApplicationContext`中实现的。
+
+初始化准备工作是在`prepareBeanFactory()`中做的，主要为容器配置了`ClassLoader`、`PropertyEditor`和`BeanPostProcessor`。
 
