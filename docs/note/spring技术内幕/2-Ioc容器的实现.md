@@ -1902,13 +1902,373 @@ private void processLocalProperty(PropertyTokenHolder tokens, PropertyValue pv) 
   - 在对Bean的属性进行依赖注入时，解析的过程也是一个递归的过程。
 
 
-#### 容器其他相关特性的设计与实现
+## 容器其他相关特性的设计与实现
 
-##### ApplicationContext和Bean的初始化及销毁
+### ApplicationContext和Bean的初始化及销毁
 
-![未命名文件](image/%E6%9C%AA%E5%91%BD%E5%90%8D%E6%96%87%E4%BB%B6.png)
+```mermaid
+sequenceDiagram
+participant fsxbf as FileSystemXmlBeanFactory
+participant aac as AbstractApplicationContext
+fsxbf ->> aac: prepareBeanFactory()
+aac ->> aac: addPropertyEditorRegistrar()
+aac ->> aac: addBeanPostProccessor()
+aac ->> aac: doClose()
+aac -->> fsxbf: closeBeanFactory()
+```
 
 `ApplicationContext`启动的过程是在`AbstractApplicationContext`中实现的。
 
 初始化准备工作是在`prepareBeanFactory()`中做的，主要为容器配置了`ClassLoader`、`PropertyEditor`和`BeanPostProcessor`。
+
+```java
+protected void prepareBeanFactory(ConfigurableListableBeanFactory beanFactory) {
+  // Tell the internal bean factory to use the context's class loader etc.
+  beanFactory.setBeanClassLoader(getClassLoader());
+  beanFactory.setBeanExpressionResolver(new StandardBeanExpressionResolver(beanFactory.getBeanClassLoader()));
+  beanFactory.addPropertyEditorRegistrar(new ResourceEditorRegistrar(this, getEnvironment()));
+
+  // Configure the bean factory with context callbacks.
+  beanFactory.addBeanPostProcessor(new ApplicationContextAwareProcessor(this));
+  beanFactory.ignoreDependencyInterface(EnvironmentAware.class);
+  beanFactory.ignoreDependencyInterface(EmbeddedValueResolverAware.class);
+  beanFactory.ignoreDependencyInterface(ResourceLoaderAware.class);
+  beanFactory.ignoreDependencyInterface(ApplicationEventPublisherAware.class);
+  beanFactory.ignoreDependencyInterface(MessageSourceAware.class);
+  beanFactory.ignoreDependencyInterface(ApplicationContextAware.class);
+
+  // BeanFactory interface not registered as resolvable type in a plain factory.
+  // MessageSource registered (and found for autowiring) as a bean.
+  beanFactory.registerResolvableDependency(BeanFactory.class, beanFactory);
+  beanFactory.registerResolvableDependency(ResourceLoader.class, this);
+  beanFactory.registerResolvableDependency(ApplicationEventPublisher.class, this);
+  beanFactory.registerResolvableDependency(ApplicationContext.class, this);
+
+  // Register early post-processor for detecting inner beans as ApplicationListeners.
+  beanFactory.addBeanPostProcessor(new ApplicationListenerDetector(this));
+
+  // Detect a LoadTimeWeaver and prepare for weaving, if found.
+  if (beanFactory.containsBean(LOAD_TIME_WEAVER_BEAN_NAME)) {
+    beanFactory.addBeanPostProcessor(new LoadTimeWeaverAwareProcessor(beanFactory));
+    // Set a temporary ClassLoader for type matching.
+    beanFactory.setTempClassLoader(new ContextTypeMatchClassLoader(beanFactory.getBeanClassLoader()));
+  }
+
+  // Register default environment beans.
+  if (!beanFactory.containsLocalBean(ENVIRONMENT_BEAN_NAME)) {
+    beanFactory.registerSingleton(ENVIRONMENT_BEAN_NAME, getEnvironment());
+  }
+  if (!beanFactory.containsLocalBean(SYSTEM_PROPERTIES_BEAN_NAME)) {
+    beanFactory.registerSingleton(SYSTEM_PROPERTIES_BEAN_NAME, getEnvironment().getSystemProperties());
+  }
+  if (!beanFactory.containsLocalBean(SYSTEM_ENVIRONMENT_BEAN_NAME)) {
+    beanFactory.registerSingleton(SYSTEM_ENVIRONMENT_BEAN_NAME, getEnvironment().getSystemEnvironment());
+  }
+}
+```
+
+在容器要关闭时，也需要完成一系列的工作，这些工作在`doClose()`方法中完成。在这个方法中，先发出容器关闭的信号，然后将Bean逐个关闭，最后关闭容器自身。
+
+```java
+protected void doClose() {
+  // Check whether an actual close attempt is necessary...
+  if (this.active.get() && this.closed.compareAndSet(false, true)) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Closing " + this);
+    }
+
+    LiveBeansView.unregisterApplicationContext(this);
+
+    try {
+      // Publish shutdown event.
+      publishEvent(new ContextClosedEvent(this));
+    }
+    catch (Throwable ex) {
+      logger.warn("Exception thrown from ApplicationListener handling ContextClosedEvent", ex);
+    }
+
+    // Stop all Lifecycle beans, to avoid delays during individual destruction.
+    if (this.lifecycleProcessor != null) {
+      try {
+        this.lifecycleProcessor.onClose();
+      }
+      catch (Throwable ex) {
+        logger.warn("Exception thrown from LifecycleProcessor on context close", ex);
+      }
+    }
+
+    // Destroy all cached singletons in the context's BeanFactory.
+    destroyBeans();
+
+    // Close the state of this context itself.
+    closeBeanFactory();
+
+    // Let subclasses do some final clean-up if they wish...
+    onClose();
+
+    // Reset local application listeners to pre-refresh state.
+    if (this.earlyApplicationListeners != null) {
+      this.applicationListeners.clear();
+      this.applicationListeners.addAll(this.earlyApplicationListeners);
+    }
+
+    // Switch to inactive.
+    this.active.set(false);
+  }
+}
+```
+
+### Ioc容器中Bean的生命周期
+
+- Bean实例的创建。
+- 为Bean实例设置属性。
+- 调用Bean的初始化方法。
+- 应用可以通过IoC容器使用Bean。
+- 当容器关闭时，调用Bean的销毁方法。
+
+
+#### Bean的初始化
+
+Bean的初始化方法调用是在`AbstractAutowireCapableBeanFactory#initializeBean()`方法中实现的。
+
+调用Bean的初始化方法之前，会调用一系列的`aware`接口实现，把相关的`BeanName`、`BeanClassLoader`，以及`BeanFactoy`注入到Bean中。
+
+```java
+/**
+ * 初始化给定的bean实例，应用工厂回调、init方法和bean后处理器。
+ */
+protected Object initializeBean(final String beanName, final Object bean, @Nullable RootBeanDefinition mbd) {
+  if (System.getSecurityManager() != null) {
+    AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+      invokeAwareMethods(beanName, bean);
+      return null;
+    }, getAccessControlContext());
+  }
+  else {
+    invokeAwareMethods(beanName, bean);
+  }
+
+  Object wrappedBean = bean;
+  if (mbd == null || !mbd.isSynthetic()) {
+    wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+  }
+
+  try {
+    // 调用初始化方法
+    invokeInitMethods(beanName, wrappedBean, mbd);
+  }
+  catch (Throwable ex) {
+    throw new BeanCreationException(
+      (mbd != null ? mbd.getResourceDescription() : null),
+      beanName, "Invocation of init method failed", ex);
+  }
+  if (mbd == null || !mbd.isSynthetic()) {
+    wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+  }
+
+  return wrappedBean;
+}
+
+protected void invokeInitMethods(String beanName, final Object bean, @Nullable RootBeanDefinition mbd)
+  throws Throwable {
+
+  boolean isInitializingBean = (bean instanceof InitializingBean);
+  if (isInitializingBean && (mbd == null || !mbd.isExternallyManagedInitMethod("afterPropertiesSet"))) {
+    if (logger.isTraceEnabled()) {
+      logger.trace("Invoking afterPropertiesSet() on bean with name '" + beanName + "'");
+    }
+    if (System.getSecurityManager() != null) {
+      try {
+        AccessController.doPrivileged((PrivilegedExceptionAction<Object>) () -> {
+          ((InitializingBean) bean).afterPropertiesSet();
+          return null;
+        }, getAccessControlContext());
+      }
+      catch (PrivilegedActionException pae) {
+        throw pae.getException();
+      }
+    }
+    else {
+      ((InitializingBean) bean).afterPropertiesSet();
+    }
+  }
+
+  if (mbd != null && bean.getClass() != NullBean.class) {
+    String initMethodName = mbd.getInitMethodName();
+    if (StringUtils.hasLength(initMethodName) &&
+        !(isInitializingBean && "afterPropertiesSet".equals(initMethodName)) &&
+        !mbd.isExternallyManagedInitMethod(initMethodName)) {
+      // 调用自定义初始化方法
+      invokeCustomInitMethod(beanName, bean, mbd);
+    }
+  }
+}
+
+protected void invokeCustomInitMethod(String beanName, final Object bean, RootBeanDefinition mbd)
+  throws Throwable {
+
+  String initMethodName = mbd.getInitMethodName();
+  Assert.state(initMethodName != null, "No init method set");
+  Method initMethod = (mbd.isNonPublicAccessAllowed() ?
+                       BeanUtils.findMethod(bean.getClass(), initMethodName) :
+                       ClassUtils.getMethodIfAvailable(bean.getClass(), initMethodName));
+
+  if (initMethod == null) {
+    if (mbd.isEnforceInitMethod()) {
+      throw new BeanDefinitionValidationException("Could not find an init method named '" +
+                                                  initMethodName + "' on bean with name '" + beanName + "'");
+    }
+    else {
+      if (logger.isTraceEnabled()) {
+        logger.trace("No default init method named '" + initMethodName +
+                     "' found on bean with name '" + beanName + "'");
+      }
+      // Ignore non-existent default lifecycle methods.
+      return;
+    }
+  }
+
+  if (logger.isTraceEnabled()) {
+    logger.trace("Invoking init method  '" + initMethodName + "' on bean with name '" + beanName + "'");
+  }
+  // 通过反射获取初始化方法
+  Method methodToInvoke = ClassUtils.getInterfaceMethodIfPossible(initMethod);
+
+  if (System.getSecurityManager() != null) {
+    AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+      ReflectionUtils.makeAccessible(methodToInvoke);
+      return null;
+    });
+    try {
+      AccessController.doPrivileged((PrivilegedExceptionAction<Object>) () ->
+                                    methodToInvoke.invoke(bean), getAccessControlContext());
+    }
+    catch (PrivilegedActionException pae) {
+      InvocationTargetException ex = (InvocationTargetException) pae.getException();
+      throw ex.getTargetException();
+    }
+  }
+  else {
+    try {
+      // 通过反射调用init方法
+      ReflectionUtils.makeAccessible(methodToInvoke);
+      methodToInvoke.invoke(bean);
+    }
+    catch (InvocationTargetException ex) {
+      throw ex.getTargetException();
+    }
+  }
+}
+```
+
+#### Bean的销毁
+
+当容器关闭的时，Bean销毁方法被调用。
+
+```java
+protected void doClose() {
+  // Check whether an actual close attempt is necessary...
+  if (this.active.get() && this.closed.compareAndSet(false, true)) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Closing " + this);
+    }
+
+    LiveBeansView.unregisterApplicationContext(this);
+
+    try {
+      // 发布容器关闭事件
+      publishEvent(new ContextClosedEvent(this));
+    }
+    catch (Throwable ex) {
+      logger.warn("Exception thrown from ApplicationListener handling ContextClosedEvent", ex);
+    }
+
+    // 停止所有生命周期bean，以避免单个销毁过程中的延迟。
+    if (this.lifecycleProcessor != null) {
+      try {
+        this.lifecycleProcessor.onClose();
+      }
+      catch (Throwable ex) {
+        logger.warn("Exception thrown from LifecycleProcessor on context close", ex);
+      }
+    }
+
+    // 销毁Beans。
+    destroyBeans();
+
+    // 关闭Bean工厂。
+    closeBeanFactory();
+
+    // Let subclasses do some final clean-up if they wish...
+    onClose();
+
+    // Reset local application listeners to pre-refresh state.
+    if (this.earlyApplicationListeners != null) {
+      this.applicationListeners.clear();
+      this.applicationListeners.addAll(this.earlyApplicationListeners);
+    }
+
+    // Switch to inactive.
+    this.active.set(false);
+  }
+}
+```
+
+销毁方法最终调用的是`DisposableBeanAdapter#destroy`。
+
+1. 对postProcessBeforeDestruction进行调用。
+2. 调用Bean的destroy方法。
+3. 对Bean的自定义销毁方法的调用。
+
+```java
+public void destroy() {
+  if (!CollectionUtils.isEmpty(this.beanPostProcessors)) {
+    for (DestructionAwareBeanPostProcessor processor : this.beanPostProcessors) {
+      processor.postProcessBeforeDestruction(this.bean, this.beanName);
+    }
+  }
+
+  if (this.invokeDisposableBean) {
+    if (logger.isTraceEnabled()) {
+      logger.trace("Invoking destroy() on bean with name '" + this.beanName + "'");
+    }
+    try {
+      if (System.getSecurityManager() != null) {
+        AccessController.doPrivileged((PrivilegedExceptionAction<Object>) () -> {
+          ((DisposableBean) this.bean).destroy();
+          return null;
+        }, this.acc);
+      }
+      else {
+        ((DisposableBean) this.bean).destroy();
+      }
+    }
+    catch (Throwable ex) {
+      String msg = "Invocation of destroy method failed on bean with name '" + this.beanName + "'";
+      if (logger.isDebugEnabled()) {
+        logger.warn(msg, ex);
+      }
+      else {
+        logger.warn(msg + ": " + ex);
+      }
+    }
+  }
+
+  if (this.destroyMethod != null) {
+    invokeCustomDestroyMethod(this.destroyMethod);
+  }
+  else if (this.destroyMethodName != null) {
+    Method methodToInvoke = determineDestroyMethod(this.destroyMethodName);
+    if (methodToInvoke != null) {
+      invokeCustomDestroyMethod(ClassUtils.getInterfaceMethodIfPossible(methodToInvoke));
+    }
+  }
+}
+```
+
+### lazy-init属性和预实例化
+
+xxx
+
+
 
