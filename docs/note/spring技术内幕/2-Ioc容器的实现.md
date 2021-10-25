@@ -2018,6 +2018,8 @@ protected void doClose() {
 }
 ```
 
+------
+
 ### Ioc容器中Bean的生命周期
 
 - Bean实例的创建。
@@ -2266,9 +2268,326 @@ public void destroy() {
 }
 ```
 
+------
+
 ### lazy-init属性和预实例化
 
-xxx
+用户可以通过设置Bean的`lazy-init`属性来控制预实例化的过程。这个**预实例化在初始化容器时完成Bean的依赖注入**。
+
+预实例化会对容器初始化的性能有一些影响，但是可以提高应用首次获取Bean的速度。
+
+对这个属性的处理也是容器`refresh`的一部分。在`finishBeanFactoryInitialization`的方法中，封装了对`lazy-init`属性的处理，实际的处理是在`DefaultListableBeanFactory`这个基本容器的`preInstantiateSingletons`方法中完成的。
+
+```java
+public void refresh() throws BeansException, IllegalStateException {
+  synchronized (this.startupShutdownMonitor) {
+    // Prepare this context for refreshing.
+    prepareRefresh();
+
+    // Tell the subclass to refresh the internal bean factory.
+    ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+
+    // Prepare the bean factory for use in this context.
+    prepareBeanFactory(beanFactory);
+
+    try {
+      // Allows post-processing of the bean factory in context subclasses.
+      postProcessBeanFactory(beanFactory);
+
+      // Invoke factory processors registered as beans in the context.
+      invokeBeanFactoryPostProcessors(beanFactory);
+
+      // Register bean processors that intercept bean creation.
+      registerBeanPostProcessors(beanFactory);
+
+      // Initialize message source for this context.
+      initMessageSource();
+
+      // Initialize event multicaster for this context.
+      initApplicationEventMulticaster();
+
+      // Initialize other special beans in specific context subclasses.
+      onRefresh();
+
+      // Check for listener beans and register them.
+      registerListeners();
+
+      // 对非懒加载的单例进行预初始化
+      finishBeanFactoryInitialization(beanFactory);
+
+      // Last step: publish corresponding event.
+      finishRefresh();
+    }
+
+    catch (BeansException ex) {
+      if (logger.isWarnEnabled()) {
+        logger.warn("Exception encountered during context initialization - " +
+                    "cancelling refresh attempt: " + ex);
+      }
+
+      // Destroy already created singletons to avoid dangling resources.
+      destroyBeans();
+
+      // Reset 'active' flag.
+      cancelRefresh(ex);
+
+      // Propagate exception to caller.
+      throw ex;
+    }
+
+    finally {
+      // Reset common introspection caches in Spring's core, since we
+      // might not ever need metadata for singleton beans anymore...
+      resetCommonCaches();
+    }
+  }
+}
+
+/**
+ * 完成预实例化
+ */
+protected void finishBeanFactoryInitialization(ConfigurableListableBeanFactory beanFactory) {
+  // 初始化容器中的转换服务
+  if (beanFactory.containsBean(CONVERSION_SERVICE_BEAN_NAME) &&
+      beanFactory.isTypeMatch(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class)) {
+    beanFactory.setConversionService(
+      beanFactory.getBean(CONVERSION_SERVICE_BEAN_NAME, ConversionService.class));
+  }
+
+  // Register a default embedded value resolver if no bean post-processor
+  // (such as a PropertyPlaceholderConfigurer bean) registered any before:
+  // at this point, primarily for resolution in annotation attribute values.
+  if (!beanFactory.hasEmbeddedValueResolver()) {
+    beanFactory.addEmbeddedValueResolver(strVal -> getEnvironment().resolvePlaceholders(strVal));
+  }
+
+  // Initialize LoadTimeWeaverAware beans early to allow for registering their transformers early.
+  String[] weaverAwareNames = beanFactory.getBeanNamesForType(LoadTimeWeaverAware.class, false, false);
+  for (String weaverAwareName : weaverAwareNames) {
+    getBean(weaverAwareName);
+  }
+
+  // 停止使用临时ClassLoader.
+  beanFactory.setTempClassLoader(null);
+
+  // 冻结配置
+  beanFactory.freezeConfiguration();
+
+  // 进行初始化.
+  beanFactory.preInstantiateSingletons();
+}
+
+/**
+ * 实例化单例
+ */
+public void preInstantiateSingletons() throws BeansException {
+  if (logger.isTraceEnabled()) {
+    logger.trace("Pre-instantiating singletons in " + this);
+  }
+
+  // Iterate over a copy to allow for init methods which in turn register new bean definitions.
+  // While this may not be part of the regular factory bootstrap, it does otherwise work fine.
+  List<String> beanNames = new ArrayList<>(this.beanDefinitionNames);
+
+  // 通过调用getBean()方法对Bean进行初始化。
+  for (String beanName : beanNames) {
+    RootBeanDefinition bd = getMergedLocalBeanDefinition(beanName);
+    if (!bd.isAbstract() && bd.isSingleton() && !bd.isLazyInit()) {
+      if (isFactoryBean(beanName)) {
+        Object bean = getBean(FACTORY_BEAN_PREFIX + beanName);
+        if (bean instanceof FactoryBean) {
+          final FactoryBean<?> factory = (FactoryBean<?>) bean;
+          boolean isEagerInit;
+          if (System.getSecurityManager() != null && factory instanceof SmartFactoryBean) {
+            isEagerInit = AccessController.doPrivileged((PrivilegedAction<Boolean>)
+                                                        ((SmartFactoryBean<?>) factory)::isEagerInit,
+                                                        getAccessControlContext());
+          }
+          else {
+            isEagerInit = (factory instanceof SmartFactoryBean &&
+                           ((SmartFactoryBean<?>) factory).isEagerInit());
+          }
+          if (isEagerInit) {
+            getBean(beanName);
+          }
+        }
+      }
+      else {
+        getBean(beanName);
+      }
+    }
+  }
+
+  // 调用初始化回调
+  for (String beanName : beanNames) {
+    Object singletonInstance = getSingleton(beanName);
+    if (singletonInstance instanceof SmartInitializingSingleton) {
+      final SmartInitializingSingleton smartSingleton = (SmartInitializingSingleton) singletonInstance;
+      if (System.getSecurityManager() != null) {
+        AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+          smartSingleton.afterSingletonsInstantiated();
+          return null;
+        }, getAccessControlContext());
+      }
+      else {
+        smartSingleton.afterSingletonsInstantiated();
+      }
+    }
+  }
+}
+```
+
+------
+
+### FactoryBean的实现
+
+FactoryBean为应用生成需要的对象，这些对象的特性可以在`getBean()`方法中进行定制。
+
+`AbstractBeanFactory#getObjectForBeanInstance`
+
+```java
+protected Object getObjectForBeanInstance(
+  Object beanInstance, String name, String beanName, @Nullable RootBeanDefinition mbd) {
+
+  // 如果这里不是对FactoryBean的调用，那么结束处理
+  if (BeanFactoryUtils.isFactoryDereference(name)) {
+    if (beanInstance instanceof NullBean) {
+      return beanInstance;
+    }
+    if (!(beanInstance instanceof FactoryBean)) {
+      throw new BeanIsNotAFactoryException(beanName, beanInstance.getClass());
+    }
+    if (mbd != null) {
+      mbd.isFactoryBean = true;
+    }
+    return beanInstance;
+  }
+
+  // Now we have the bean instance, which may be a normal bean or a FactoryBean.
+  // If it's a FactoryBean, we use it to create a bean instance, unless the
+  // caller actually wants a reference to the factory.
+  if (!(beanInstance instanceof FactoryBean)) {
+    return beanInstance;
+  }
+
+  Object object = null;
+  if (mbd != null) {
+    mbd.isFactoryBean = true;
+  }
+  else {
+    object = getCachedObjectForFactoryBean(beanName);
+  }
+  if (object == null) {
+    // Return bean instance from factory.
+    FactoryBean<?> factory = (FactoryBean<?>) beanInstance;
+    // Caches object obtained from FactoryBean if it is a singleton.
+    if (mbd == null && containsBeanDefinition(beanName)) {
+      mbd = getMergedLocalBeanDefinition(beanName);
+    }
+    boolean synthetic = (mbd != null && mbd.isSynthetic());
+    // 这里从FactoryBean中得到bean
+    object = getObjectFromFactoryBean(factory, beanName, !synthetic);
+  }
+  return object;
+}
+```
+
+`org.springframework.beans.factory.support.FactoryBeanRegistrySupport#getObjectFromFactoryBean
+
+```java
+protected Object getObjectFromFactoryBean(FactoryBean<?> factory, String beanName, boolean shouldPostProcess) {
+  if (factory.isSingleton() && containsSingleton(beanName)) {
+    synchronized (getSingletonMutex()) {
+      Object object = this.factoryBeanObjectCache.get(beanName);
+      if (object == null) {
+        object = doGetObjectFromFactoryBean(factory, beanName);
+        // Only post-process and store if not put there already during getObject() call above
+        // (e.g. because of circular reference processing triggered by custom getBean calls)
+        Object alreadyThere = this.factoryBeanObjectCache.get(beanName);
+        if (alreadyThere != null) {
+          object = alreadyThere;
+        }
+        else {
+          if (shouldPostProcess) {
+            if (isSingletonCurrentlyInCreation(beanName)) {
+              // Temporarily return non-post-processed object, not storing it yet..
+              return object;
+            }
+            beforeSingletonCreation(beanName);
+            try {
+              object = postProcessObjectFromFactoryBean(object, beanName);
+            }
+            catch (Throwable ex) {
+              throw new BeanCreationException(beanName,
+                                              "Post-processing of FactoryBean's singleton object failed", ex);
+            }
+            finally {
+              afterSingletonCreation(beanName);
+            }
+          }
+          if (containsSingleton(beanName)) {
+            this.factoryBeanObjectCache.put(beanName, object);
+          }
+        }
+      }
+      return object;
+    }
+  }
+  else {
+    Object object = doGetObjectFromFactoryBean(factory, beanName);
+    if (shouldPostProcess) {
+      try {
+        object = postProcessObjectFromFactoryBean(object, beanName);
+      }
+      catch (Throwable ex) {
+        throw new BeanCreationException(beanName, "Post-processing of FactoryBean's object failed", ex);
+      }
+    }
+    return object;
+  }
+}
+
+private Object doGetObjectFromFactoryBean(final FactoryBean<?> factory, final String beanName)
+  throws BeanCreationException {
+
+  Object object;
+  try {
+    if (System.getSecurityManager() != null) {
+      AccessControlContext acc = getAccessControlContext();
+      try {
+        object = AccessController.doPrivileged((PrivilegedExceptionAction<Object>) factory::getObject, acc);
+      }
+      catch (PrivilegedActionException pae) {
+        throw pae.getException();
+      }
+    }
+    else {
+      object = factory.getObject();
+    }
+  }
+  catch (FactoryBeanNotInitializedException ex) {
+    throw new BeanCurrentlyInCreationException(beanName, ex.toString());
+  }
+  catch (Throwable ex) {
+    throw new BeanCreationException(beanName, "FactoryBean threw exception on object creation", ex);
+  }
+
+  // Do not accept a null value for a FactoryBean that's not fully
+  // initialized yet: Many FactoryBeans just return null then.
+  if (object == null) {
+    if (isSingletonCurrentlyInCreation(beanName)) {
+      throw new BeanCurrentlyInCreationException(
+        beanName, "FactoryBean which is currently in creation returned null from getObject");
+    }
+    object = new NullBean();
+  }
+  return object;
+}
+```
+
+
+
+
 
 
 
