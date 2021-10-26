@@ -2441,6 +2441,9 @@ public void preInstantiateSingletons() throws BeansException {
 
 ### FactoryBean的实现
 
+- 返回的是产品的实例而不是本身。
+- 使用工厂模式，封装Proxy、RMI、JNDI都可以使用这种方式。
+
 FactoryBean为应用生成需要的对象，这些对象的特性可以在`getBean()`方法中进行定制。
 
 `AbstractBeanFactory#getObjectForBeanInstance`
@@ -2492,7 +2495,7 @@ protected Object getObjectForBeanInstance(
 }
 ```
 
-`org.springframework.beans.factory.support.FactoryBeanRegistrySupport#getObjectFromFactoryBean
+`org.springframework.beans.factory.support.FactoryBeanRegistrySupport#getObjectFromFactoryBean`
 
 ```java
 protected Object getObjectFromFactoryBean(FactoryBean<?> factory, String beanName, boolean shouldPostProcess) {
@@ -2585,9 +2588,243 @@ private Object doGetObjectFromFactoryBean(final FactoryBean<?> factory, final St
 }
 ```
 
+------
+
+### BeanPostProcessor的实现
+
+- 经常使用到的一个特性。
+- 是一个监听器性质的Bean后置处理器。
+- 注册到容器后，Bean会具备接受Ioc容器事件回调的能力。
+
+#### 接口
+
+BeanPostProcessor
+
+#### 方法
+
+- `postProcessBeforeInitialization` 初始化前置处理器，在Bean的初始化前提供回调入口。
+- `postProcessAfterInitialization` 初始化后置处理器，在Bean的初始化后提供回调入口。
+
+```java
+public interface BeanPostProcessor {
+
+	@Nullable
+	default Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+		return bean;
+	}
+
+	@Nullable
+	default Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+		return bean;
+	}
+
+}
+```
+
+#### 初始化过程调用关系
+
+- `postProcessBeforeinitialization()`是在`populateBean()`完成之后被调用的。
+- 在完成对Bean的生成和依赖注入以后，开始对Bean进行初始化，这个初始化过程包含了对后置处理器postProcessBeforeInitialization的回调。
+- Bean初始化工作的主要内容
+  - 为类型是`BeanNameAware`的Bean设置Bean的名字。
+  - 为类型是`BeanClassLoaderAware`的Bean设置类装载器。
+  - 为类型是`BeanFactoryAware`的Bean设置自身所在的IoC容器以供回调使用。
+  - 对`postProcessBeforeInitialization`/`postProcessAfterInitialization`的回调和初始化属性`init-method`的处理。
+
+
+```mermaid
+sequenceDiagram
+participant bf as BeanFactory
+participant abf as AbstractFactory
+participant aacbf as AbstractAutowireCapableBeanFactory
+participant bpp as BeanPostProcessor
+
+bf ->> abf: doGetBean()
+abf ->> aacbf: doCreateBean()
+aacbf ->> aacbf: initalizeBean()
+aacbf ->> aacbf: applyBeanPostProcessorBeforeInitlializat
+aacbf ->> bpp: postProcessBeforeInitialization()
+bpp -->> bf: end
+```
+
+节选的`doCreateBean()`代码。
+
+```java
+Object exposedObject = bean;
+try {
+  // 创建bean，依赖注入
+  populateBean(beanName, mbd, instanceWrapper);
+  // bean 初始化，包括后置处理器回调
+  exposedObject = initializeBean(beanName, exposedObject, mbd);
+}
+catch (Throwable ex) {
+  if (ex instanceof BeanCreationException && beanName.equals(((BeanCreationException) ex).getBeanName())) {
+    throw (BeanCreationException) ex;
+  }
+  else {
+    throw new BeanCreationException(
+      mbd.getResourceDescription(), beanName, "Initialization of bean failed", ex);
+  }
+}
+```
+
+`AbstractAutowireCapableBeanFactory#initializeBean()`
+
+```java
+protected Object initializeBean(final String beanName, final Object bean, @Nullable RootBeanDefinition mbd) {
+  if (System.getSecurityManager() != null) {
+    AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+      invokeAwareMethods(beanName, bean);
+      return null;
+    }, getAccessControlContext());
+  }
+  else {
+    invokeAwareMethods(beanName, bean);
+  }
+
+  Object wrappedBean = bean;
+  if (mbd == null || !mbd.isSynthetic()) {
+    // 调用后置处理器初始化前回调方法
+    wrappedBean = applyBeanPostProcessorsBeforeInitialization(wrappedBean, beanName);
+  }
+
+  try {
+    // 调用初始化方法
+    invokeInitMethods(beanName, wrappedBean, mbd);
+  }
+  catch (Throwable ex) {
+    throw new BeanCreationException(
+      (mbd != null ? mbd.getResourceDescription() : null),
+      beanName, "Invocation of init method failed", ex);
+  }
+  if (mbd == null || !mbd.isSynthetic()) {
+    // 调用后置处理器初始化后回调方法
+    wrappedBean = applyBeanPostProcessorsAfterInitialization(wrappedBean, beanName);
+  }
+
+  return wrappedBean;
+}
+
+/**
+ * 处理各种Aware方法。
+ */
+private void invokeAwareMethods(final String beanName, final Object bean) {
+  if (bean instanceof Aware) {
+    if (bean instanceof BeanNameAware) {
+      ((BeanNameAware) bean).setBeanName(beanName);
+    }
+    if (bean instanceof BeanClassLoaderAware) {
+      ClassLoader bcl = getBeanClassLoader();
+      if (bcl != null) {
+        ((BeanClassLoaderAware) bean).setBeanClassLoader(bcl);
+      }
+    }
+    if (bean instanceof BeanFactoryAware) {
+      ((BeanFactoryAware) bean).setBeanFactory(AbstractAutowireCapableBeanFactory.this);
+    }
+  }
+}
+```
+
+------
+
+### Autowiring自动依赖装配的实现
+
+>在自动装配中，不需要对Bean属性做显式的依赖关系声明，只需要配置好autowiring属性，IoC容器会根据这个属性的配置，使用反射自动查找属性的类型或者名字，然后基于属性的类型或名字来自动匹配IoC容器中的Bean，从而自动地完成依赖注入。
+>
 
 
 
+- `autowiring`属性在对Bean属性进行依赖注入时起作用。
+- 对`autowirng`属性进行处理，从而完成对Bean属性的自动依赖装配，是在`populateBean()`中实现的。
 
+#### 实现逻辑
 
+**autowireByName**
 
+1. 从BeanDefinition和BeanWapper中获取当前Bean的名字。
+2. 根据Bean名称从容器中进行匹配得到当前Bean。
+3. 获取当前Bean的属性并通过getBean获取属性依赖的对象，可能触发新的Bean创建及依赖注入。
+4. 得到结果并为当前Bean设置属性。
+
+**autowireByType**
+
+类似于autowireByName。
+
+#### 代码节选
+
+节选`AbstractAutowireCapableBeanFactory`的`populateBean`方法中与autowiring实现相关的部分
+
+```java
+int resolvedAutowireMode = mbd.getResolvedAutowireMode();
+if (resolvedAutowireMode == AUTOWIRE_BY_NAME || resolvedAutowireMode == AUTOWIRE_BY_TYPE) {
+  MutablePropertyValues newPvs = new MutablePropertyValues(pvs);
+  // Add property values based on autowire by name if applicable.
+  if (resolvedAutowireMode == AUTOWIRE_BY_NAME) {
+    autowireByName(beanName, mbd, bw, newPvs);
+  }
+  // Add property values based on autowire by type if applicable.
+  if (resolvedAutowireMode == AUTOWIRE_BY_TYPE) {
+    autowireByType(beanName, mbd, bw, newPvs);
+  }
+  pvs = newPvs;
+}
+```
+
+------
+
+### Bean的依赖检查
+
+>Ioc容器通过依赖检查，确保所有的属性都已经被正确设置。
+
+- 在Bean定义中设置`dependency-check`属性指定依赖检查模式。
+  - `none` 默认
+  - `simple`
+  - `object`
+  - `all`
+- 依赖检查功能在`AbstractAutowireCapableBeanFactory#populateBean()`方法完成Bean初始化后触发的。
+
+```java
+if (needsDepCheck) {
+  if (filteredPds == null) {
+    filteredPds = filterPropertyDescriptorsForDependencyCheck(bw, mbd.allowCaching);
+  }
+  checkDependencies(beanName, mbd, filteredPds, pvs);
+}
+
+protected void checkDependencies(
+  String beanName, AbstractBeanDefinition mbd, PropertyDescriptor[] pds, @Nullable PropertyValues pvs)
+  throws UnsatisfiedDependencyException {
+
+  int dependencyCheck = mbd.getDependencyCheck();
+  for (PropertyDescriptor pd : pds) {
+    if (pd.getWriteMethod() != null && (pvs == null || !pvs.contains(pd.getName()))) {
+      boolean isSimple = BeanUtils.isSimpleProperty(pd.getPropertyType());
+      boolean unsatisfied = (dependencyCheck == AbstractBeanDefinition.DEPENDENCY_CHECK_ALL) ||
+        (isSimple && dependencyCheck == AbstractBeanDefinition.DEPENDENCY_CHECK_SIMPLE) ||
+        (!isSimple && dependencyCheck == AbstractBeanDefinition.DEPENDENCY_CHECK_OBJECTS);
+      if (unsatisfied) {
+        throw new UnsatisfiedDependencyException(mbd.getResourceDescription(), beanName, pd.getName(),
+                                                 "Set this property value or disable dependency checking for this bean.");
+      }
+    }
+  }
+}
+```
+
+------
+
+### Bean对IoC容器的感知
+
+>通常情况下，Bean不需要掌握容器的情况。
+>
+>Spring IoC容器提供了特定的aware接口实现Bean对容器的感知。
+
+#### Aware接口种类
+
+- `BeanNameAware`  可以在Bean中得到它在IoC容器中的Bean实例名称。
+- `BeanFactoryAware`  可以在Bean中得到Bean所在的IoC容器，从而直接在Bean中使用IoC容器的服务。
+- `ApplicationContextAware`  可以在Bean中得到Bean所在的应用上下文，从而直接在Bean中使用应用上下文的服务。
+- `MessageSourceAware`  在Bean中可以得到消息源。
+- `ApplicationEventPublisherAware` 在Bean中可以得到应用上下文的事件发布器，从而可以在Bean中发布应用上下文的事件。
+- `ResourceLoaderAware` 在Bean中可以得到ResourceLoader，从而在Bean中使用ResourceLoader加载外部对应的Resource资源。
