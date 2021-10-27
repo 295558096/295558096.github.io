@@ -2828,3 +2828,86 @@ protected void checkDependencies(
 - `MessageSourceAware`  在Bean中可以得到消息源。
 - `ApplicationEventPublisherAware` 在Bean中可以得到应用上下文的事件发布器，从而可以在Bean中发布应用上下文的事件。
 - `ResourceLoaderAware` 在Bean中可以得到ResourceLoader，从而在Bean中使用ResourceLoader加载外部对应的Resource资源。
+
+#### ApplicationContextAwareProcessor
+
+`ApplicationContextAwareProcessor`作为`BeanPostProcessor`的实现，对一系列的aware回调进行了调用。
+
+```java
+class ApplicationContextAwareProcessor implements BeanPostProcessor {
+
+  private final ConfigurableApplicationContext applicationContext;
+
+  private final StringValueResolver embeddedValueResolver;
+
+
+  /**
+	 * Create a new ApplicationContextAwareProcessor for the given context.
+	 */
+  public ApplicationContextAwareProcessor(ConfigurableApplicationContext applicationContext) {
+    this.applicationContext = applicationContext;
+    this.embeddedValueResolver = new EmbeddedValueResolver(applicationContext.getBeanFactory());
+  }
+
+
+  @Override
+  @Nullable
+  public Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+    if (!(bean instanceof EnvironmentAware || bean instanceof EmbeddedValueResolverAware ||
+          bean instanceof ResourceLoaderAware || bean instanceof ApplicationEventPublisherAware ||
+          bean instanceof MessageSourceAware || bean instanceof ApplicationContextAware)){
+      return bean;
+    }
+
+    AccessControlContext acc = null;
+
+    if (System.getSecurityManager() != null) {
+      acc = this.applicationContext.getBeanFactory().getAccessControlContext();
+    }
+
+    if (acc != null) {
+      AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+        invokeAwareInterfaces(bean);
+        return null;
+      }, acc);
+    }
+    else {
+      invokeAwareInterfaces(bean);
+    }
+
+    return bean;
+  }
+
+  private void invokeAwareInterfaces(Object bean) {
+    if (bean instanceof EnvironmentAware) {
+      ((EnvironmentAware) bean).setEnvironment(this.applicationContext.getEnvironment());
+    }
+    if (bean instanceof EmbeddedValueResolverAware) {
+      ((EmbeddedValueResolverAware) bean).setEmbeddedValueResolver(this.embeddedValueResolver);
+    }
+    if (bean instanceof ResourceLoaderAware) {
+      ((ResourceLoaderAware) bean).setResourceLoader(this.applicationContext);
+    }
+    if (bean instanceof ApplicationEventPublisherAware) {
+      ((ApplicationEventPublisherAware) bean).setApplicationEventPublisher(this.applicationContext);
+    }
+    if (bean instanceof MessageSourceAware) {
+      ((MessageSourceAware) bean).setMessageSource(this.applicationContext);
+    }
+    if (bean instanceof ApplicationContextAware) {
+      ((ApplicationContextAware) bean).setApplicationContext(this.applicationContext);
+    }
+  }
+
+}
+```
+
+## 小结
+
+### 容器初始化流程
+
+- BeanDefinition的定位。
+
+- 容器的初始化。
+
+  
