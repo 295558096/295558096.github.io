@@ -911,24 +911,25 @@ Object retVal = methodProxy.invoke(this.target, args);
 >对于目标对象增强的实现封装在AOP拦截器链中，由一个个具体的拦截器来完成。
 
 - 对拦截器链的调用都是在`ReflectiveMethodInvocation`中通过`proceed`方法实现的。
+- 在`proceed`方法中，会逐个运行拦截器的拦截方法。
+
 - 在`Pointcut`切点中需要进行`matches`的匹配过程，即`matches`调用对方法进行匹配判断，来决定是否需要实行通知增强。
 
-#### xx
+#### 源码
 
 `ReflectiveMethodInvocation#proceed`
 
 ```java
 public Object proceed() throws Throwable {
-  // We start with an index of -1 and increment early.
+  // 从索引为-1的拦截器开始调用，并按序递增，如果拦截器链中的拦截器迭代调用完毕，这里开始调用target的函数
   if (this.currentInterceptorIndex == this.interceptorsAndDynamicMethodMatchers.size() - 1) {
     return invokeJoinpoint();
   }
-
+	// 链式调用interceptorOrInterceptionAdvice
   Object interceptorOrInterceptionAdvice =
     this.interceptorsAndDynamicMethodMatchers.get(++this.currentInterceptorIndex);
   if (interceptorOrInterceptionAdvice instanceof InterceptorAndDynamicMethodMatcher) {
-    // Evaluate dynamic method matcher here: static part will already have
-    // been evaluated and found to match.
+    // 进行匹配
     InterceptorAndDynamicMethodMatcher dm =
       (InterceptorAndDynamicMethodMatcher) interceptorOrInterceptionAdvice;
     Class<?> targetClass = (this.targetClass != null ? this.targetClass : this.method.getDeclaringClass());
@@ -936,23 +937,544 @@ public Object proceed() throws Throwable {
       return dm.interceptor.invoke(this);
     }
     else {
-      // Dynamic matching failed.
-      // Skip this interceptor and invoke the next in the chain.
+      // 匹配失败，跳过拦截器，继续调用下一个拦截器
       return proceed();
     }
   }
   else {
-    // It's an interceptor, so we just invoke it: The pointcut will have
-    // been evaluated statically before this object was constructed.
+		// 如果是一个interceptpr，直接调用对应的方法
     return ((MethodInterceptor) interceptorOrInterceptionAdvice).invoke(this);
   }
 }
 ```
 
+### 配置通知器
+
+- 获取配置。
+
+- `interceptorOrInterceptionAdvice`是获得的拦截器，它通过拦截器机制对目标对象的行为增强起作用。
+
+- `interceptorsAndDynamicMethodMatchers`是装配好的全部拦截器集合。
+
+- `interceptorsAndDynamicMethodMatchers`的来源。
+
+  ```java
+  org.springframework.aop.framework.JdkDynamicAopProxy#invoke
+  // 获取拦截器
+  List<Object> chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice(method, targetClass);
+  ```
+
+- 获取`interceptors`的操作是由advised对象完成的，advised是`AdvisedSupport`对象，`AdvisedSupport`类也是`ProxyFactoryBean`的基类。
+
+- 取得拦截器链的工作是由配置好的`advisorChainFactory`来完成的，它是一个**生成通知器链**的工厂，默认使用的是`DefaultAdvisorChainFactory`。
+
+- `DefaultAdvisorChainFactory`会通过一个`AdvisorAdapterRegistry`来实现拦截器的注册。
+
+- `AdvisorAdapterRegistry`注册器，利用它来对从`ProxyFactoryBean`配置中得到的通知进行适配，从而获得相应的拦截器，再把它加入前面设置好的List中去，完成拦截器注册过程。
+
+- 事实上，`advisor`通知器是从`AdvisorSupport`中取得的，在`ProxyFactoryBean`的`getObject`方法中对`advisor`进行初始化时，**从XML配置中获取了advisor通知器**。
+
+- `ProxyFactoryBean`的`initializeAdvisorChain`方法对通知器链进行初始化，从Ioc容器中获取到Bean，`ProxyFactoryBean`本身实现了`BeanFactoryAware`接口，注入了`BeanFactory`。
+
+#### 源码
+
+获取配置 `ReflectiveMethodInvocation#proceed` 
+
+```java
+Object interceptorOrInterceptionAdvice =
+  this.interceptorsAndDynamicMethodMatchers.get(++this.currentInterceptorIndex);  
+```
+
+从缓存中获取拦截器链 `AdvisedSupport#getInterceptorsAndDynamicInterceptionAdvice` 
+
+```java
+public List<Object> getInterceptorsAndDynamicInterceptionAdvice(Method method, @Nullable Class<?> targetClass) {
+  // 根据Method获取缓存的Key
+  MethodCacheKey cacheKey = new MethodCacheKey(method);
+  // 从缓存中获取
+  List<Object> cached = this.methodCache.get(cacheKey);
+  if (cached == null) {
+    cached = this.advisorChainFactory.getInterceptorsAndDynamicInterceptionAdvice(
+      this, method, targetClass);
+    this.methodCache.put(cacheKey, cached);
+  }
+  return cached;
+}
+```
+
+解析配置并匹配拦截器集合`DefaultAdvisorChainFactory#getInterceptorsAndDynamicInterceptionAdvice` 
+
+```java
+public List<Object> getInterceptorsAndDynamicInterceptionAdvice(
+  Advised config, Method method, @Nullable Class<?> targetClass) {
+
+  // This is somewhat tricky... We have to process introductions first,
+  // 获取AdvisorAdapterRegistry
+  AdvisorAdapterRegistry registry = GlobalAdvisorAdapterRegistry.getInstance();
+  // 从配置中读取Advisor
+  Advisor[] advisors = config.getAdvisors();
+  List<Object> interceptorList = new ArrayList<>(advisors.length);
+  Class<?> actualClass = (targetClass != null ? targetClass : method.getDeclaringClass());
+  Boolean hasIntroductions = null;
+
+  for (Advisor advisor : advisors) {
+    if (advisor instanceof PointcutAdvisor) {
+      // Add it conditionally.
+      PointcutAdvisor pointcutAdvisor = (PointcutAdvisor) advisor;
+      if (config.isPreFiltered() || pointcutAdvisor.getPointcut().getClassFilter().matches(actualClass)) {
+        MethodMatcher mm = pointcutAdvisor.getPointcut().getMethodMatcher();
+        boolean match;
+        if (mm instanceof IntroductionAwareMethodMatcher) {
+          if (hasIntroductions == null) {
+            hasIntroductions = hasMatchingIntroductions(advisors, actualClass);
+          }
+          match = ((IntroductionAwareMethodMatcher) mm).matches(method, actualClass, hasIntroductions);
+        }
+        else {
+          match = mm.matches(method, actualClass);
+        }
+        if (match) {
+          // 拦截器链是通过AdvisorAdapterRegistry来加入的
+          MethodInterceptor[] interceptors = registry.getInterceptors(advisor);
+          if (mm.isRuntime()) {
+            // Creating a new object instance in the getInterceptors() method
+            // isn't a problem as we normally cache created chains.
+            for (MethodInterceptor interceptor : interceptors) {
+              interceptorList.add(new InterceptorAndDynamicMethodMatcher(interceptor, mm));
+            }
+          }
+          else {
+            interceptorList.addAll(Arrays.asList(interceptors));
+          }
+        }
+      }
+    }
+    else if (advisor instanceof IntroductionAdvisor) {
+      IntroductionAdvisor ia = (IntroductionAdvisor) advisor;
+      if (config.isPreFiltered() || ia.getClassFilter().matches(actualClass)) {
+        Interceptor[] interceptors = registry.getInterceptors(advisor);
+        interceptorList.addAll(Arrays.asList(interceptors));
+      }
+    }
+    else {
+      Interceptor[] interceptors = registry.getInterceptors(advisor);
+      interceptorList.addAll(Arrays.asList(interceptors));
+    }
+  }
+
+  return interceptorList;
+}
+
+// 判断Advisors是否符合配置要求
+private static boolean hasMatchingIntroductions(Advisor[] advisors, Class<?> actualClass) {
+  for (Advisor advisor : advisors) {
+    if (advisor instanceof IntroductionAdvisor) {
+      IntroductionAdvisor ia = (IntroductionAdvisor) advisor;
+      if (ia.getClassFilter().matches(actualClass)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+```
+
+初始化通知器`ProxyFactoryBean#initializeAdvisorChain`
+
+```java
+private synchronized void initializeAdvisorChain() throws AopConfigException, BeansException {
+  // 保证仅加在一次
+  if (this.advisorChainInitialized) {
+    return;
+  }
+
+  if (!ObjectUtils.isEmpty(this.interceptorNames)) {
+    if (this.beanFactory == null) {
+      throw new IllegalStateException("No BeanFactory available anymore (probably due to serialization) " +
+                                      "- cannot resolve interceptor names " + Arrays.asList(this.interceptorNames));
+    }
+
+    // Globals can't be last unless we specified a targetSource using the property...
+    if (this.interceptorNames[this.interceptorNames.length - 1].endsWith(GLOBAL_SUFFIX) &&
+        this.targetName == null && this.targetSource == EMPTY_TARGET_SOURCE) {
+      throw new AopConfigException("Target required after globals");
+    }
+
+    // Materialize interceptor chain from bean names.
+    for (String name : this.interceptorNames) {
+      if (name.endsWith(GLOBAL_SUFFIX)) {
+        if (!(this.beanFactory instanceof ListableBeanFactory)) {
+          throw new AopConfigException(
+            "Can only use global advisors or interceptors with a ListableBeanFactory");
+        }
+        addGlobalAdvisors((ListableBeanFactory) this.beanFactory,
+                          name.substring(0, name.length() - GLOBAL_SUFFIX.length()));
+      }
+
+      else {
+        Object advice;
+        if (this.singleton || this.beanFactory.isSingleton(name)) {
+					// 单例
+          advice = this.beanFactory.getBean(name);
+        }
+        else {
+          // 多例
+          advice = new PrototypePlaceholderAdvisor(name);
+        }
+        addAdvisorOnChainCreation(advice);
+      }
+    }
+  }
+  this.advisorChainInitialized = true;
+}
+```
+
+### Advice通知的实现
+
+- 全局默认单例的通知器适配注册器
+
+  ```java
+  AdvisorAdapterRegistry registry = GlobalAdvisorAdapterRegistry.getInstance();
+  ```
+
+- `DefaultAdvisorAdapterRegistry`中，设置了一系列的adapter适配器，这些`adapter`适配器的实现，为Spring AOP的advice**提供编织能力**。
+
+  - 调用adapter的`support`方法，通过这个方法来判断取得的advice属于什么类型的advice通知，从而根据不同的advice类型来注册不同的`AdviceInterceptor`。
+  - `AdviceInterceptor`都是Spring AOP框架设计好了的，是为实现不同的advice功能提供服务的。有了这些AdviceInterceptor，可以方便地使用由Spring提供的各种不同的advice来设计AOP应用。
+
+#### AdvisorAdapter
+
+> 通知适配器
+
+- AdvisorAdapter通过适配器模式，创建了与Advice名字相同的子类用来处理对用的通知，承担着不同的适配任务。
+- `AdvisorAdapter`接口定义了两个方法
+  - `boolean supportsAdvice(Advice advice);` 是否支持通知
+  - `MethodInterceptor getInterceptor(Advisor advisor);` 获取方法拦截器
+
+![AdvisorAdapter](image/AdvisorAdapter.png)
+
+#### 源码
+
+`DefaultAdvisorChainFactory#getInterceptorsAndDynamicInterceptionAdvice`
+
+```java
+@Override
+public List<Object> getInterceptorsAndDynamicInterceptionAdvice(
+  Advised config, Method method, @Nullable Class<?> targetClass) {
+
+  // 得到注册器GlobalAdvisorAdapterRegistry，这是一个单件模式的实现
+  AdvisorAdapterRegistry registry = GlobalAdvisorAdapterRegistry.getInstance();
+  // 从配置中获取通知器
+  Advisor[] advisors = config.getAdvisors();
+  List<Object> interceptorList = new ArrayList<>(advisors.length);
+  Class<?> actualClass = (targetClass != null ? targetClass : method.getDeclaringClass());
+  Boolean hasIntroductions = null;
+
+  for (Advisor advisor : advisors) {
+    // 织入点通知器
+    if (advisor instanceof PointcutAdvisor) {
+      PointcutAdvisor pointcutAdvisor = (PointcutAdvisor) advisor;
+      if (config.isPreFiltered() || pointcutAdvisor.getPointcut().getClassFilter().matches(actualClass)) {
+        MethodMatcher mm = pointcutAdvisor.getPointcut().getMethodMatcher();
+        boolean match;
+        if (mm instanceof IntroductionAwareMethodMatcher) {
+          if (hasIntroductions == null) {
+            hasIntroductions = hasMatchingIntroductions(advisors, actualClass);
+          }
+          match = ((IntroductionAwareMethodMatcher) mm).matches(method, actualClass, hasIntroductions);
+        }
+        else {
+          match = mm.matches(method, actualClass);
+        }
+        if (match) {
+          // 从GlobalAdvisorAdapterRegistry中取得MethodInterceptor的实现
+          MethodInterceptor[] interceptors = registry.getInterceptors(advisor);
+          if (mm.isRuntime()) {
+            // Creating a new object instance in the getInterceptors() method
+            // isn't a problem as we normally cache created chains.
+            for (MethodInterceptor interceptor : interceptors) {
+              interceptorList.add(new InterceptorAndDynamicMethodMatcher(interceptor, mm));
+            }
+          }
+          else {
+            interceptorList.addAll(Arrays.asList(interceptors));
+          }
+        }
+      }
+    }
+    // 应用级别的拦截器
+    else if (advisor instanceof IntroductionAdvisor) {
+      IntroductionAdvisor ia = (IntroductionAdvisor) advisor;
+      if (config.isPreFiltered() || ia.getClassFilter().matches(actualClass)) {
+        // 获取拦截器
+        Interceptor[] interceptors = registry.getInterceptors(advisor);
+        interceptorList.addAll(Arrays.asList(interceptors));
+      }
+    }
+    else {
+      // 获取拦截器
+      Interceptor[] interceptors = registry.getInterceptors(advisor);
+      interceptorList.addAll(Arrays.asList(interceptors));
+    }
+  }
+  return interceptorList;
+}
+```
+
+全局通知器适配注册器 `GlobalAdvisorAdapterRegistry`
+
+```java
+// final 不能被继承
+public final class GlobalAdvisorAdapterRegistry {
+
+  // 私有化的构造器
+  private GlobalAdvisorAdapterRegistry() {
+  }
+
+  // 私有的静态变量
+  private static AdvisorAdapterRegistry instance = new DefaultAdvisorAdapterRegistry();
+
+  // 实例方法
+  public static AdvisorAdapterRegistry getInstance() {
+    return instance;
+  }
+
+  static void reset() {
+    instance = new DefaultAdvisorAdapterRegistry();
+  }
+
+}
+```
+
+默认的通知适配注册器`DefaultAdvisorAdapterRegistry`
+
+```java
+public class DefaultAdvisorAdapterRegistry implements AdvisorAdapterRegistry, Serializable {
+
+  // 持有一个AdvisorAdapter的List，这个List中的Adapter是与实现Spring AOP的advice增强功能相对应的，before、afterReturning、throws
+  private final List<AdvisorAdapter> adapters = new ArrayList<>(3);
 
 
+	// 构造器，注册spring提供的三个通知适配器
+  public DefaultAdvisorAdapterRegistry() {
+    registerAdvisorAdapter(new MethodBeforeAdviceAdapter());
+    registerAdvisorAdapter(new AfterReturningAdviceAdapter());
+    registerAdvisorAdapter(new ThrowsAdviceAdapter());
+  }
 
+
+  @Override
+  public Advisor wrap(Object adviceObject) throws UnknownAdviceTypeException {
+    if (adviceObject instanceof Advisor) {
+      return (Advisor) adviceObject;
+    }
+    if (!(adviceObject instanceof Advice)) {
+      throw new UnknownAdviceTypeException(adviceObject);
+    }
+    Advice advice = (Advice) adviceObject;
+    if (advice instanceof MethodInterceptor) {
+      // So well-known it doesn't even need an adapter.
+      return new DefaultPointcutAdvisor(advice);
+    }
+    for (AdvisorAdapter adapter : this.adapters) {
+      // Check that it is supported.
+      if (adapter.supportsAdvice(advice)) {
+        return new DefaultPointcutAdvisor(advice);
+      }
+    }
+    throw new UnknownAdviceTypeException(advice);
+  }
+
+  @Override
+  // 获取拦截器集合
+  public MethodInterceptor[] getInterceptors(Advisor advisor) throws UnknownAdviceTypeException {
+    List<MethodInterceptor> interceptors = new ArrayList<>(3);
+    // 从Advisor通知器配置中取得advice通知
+    Advice advice = advisor.getAdvice();
+    // MethodInterceptor类型的通知，直接加入interceptors的List中，不需要适配
+    if (advice instanceof MethodInterceptor) {
+      interceptors.add((MethodInterceptor) advice);
+    }
+    // 对通知进行适配，使用已经配置好的Adapter：MethodBeforeAdviceAdapter、AfterReturningAdviceAdapter以及ThrowsAdviceAdapter，然后从对应的adapter中取出封装好AOP编织功能的拦截器
+    for (AdvisorAdapter adapter : this.adapters) {
+      if (adapter.supportsAdvice(advice)) {
+        interceptors.add(adapter.getInterceptor(advisor));
+      }
+    }
+    if (interceptors.isEmpty()) {
+      throw new UnknownAdviceTypeException(advisor.getAdvice());
+    }
+    return interceptors.toArray(new MethodInterceptor[0]);
+  }
+
+  @Override
+  public void registerAdvisorAdapter(AdvisorAdapter adapter) {
+    this.adapters.add(adapter);
+  }
+
+}
+```
+
+`AdvisorAdapter`
+
+```java
+public interface AdvisorAdapter {
+
+	boolean supportsAdvice(Advice advice);
+
+	MethodInterceptor getInterceptor(Advisor advisor);
+
+}
+```
+
+### ProxyFactory实现AOP
+
+- 除了使用`ProxyFactoryBean`实现AOP应用之外，还可以使用`ProxyFactory`来实现Spring AOP的功能。
+- 在使用`ProxyFactory`的时候，需要编程式地完成AOP应用的设置。
+- `ProxyFactory`没有使用`FactoryBean`的IoC封装，而是通过直接继承`ProxyCreatorSupport`的功能来完成AOP的属性配置。
+- `ProxyFactory`是以`getProxy`为入口，由`DefaultAopProxyFactory`来完成的。
+- 
+
+#### ProxyFactory获取代理类的代码
+
+```java
+public void getProxy() {
+  TargetImpl target = new TargetImpl();
+  ProxyFactory aopFactory = new ProxyFactory(target);
+  aopFactory.addAdvisor(myAdvisor);
+  aopFactory.addAdvice(myAdvice);
+  TargetImpl proxy = aopFactory.getProxy();
+}
+```
+
+#### 源码
+
+```java
+public class ProxyFactory extends ProxyCreatorSupport {
+
+	public ProxyFactory() {
+	}
+
+	public ProxyFactory(Object target) {
+		setTarget(target);
+		setInterfaces(ClassUtils.getAllInterfaces(target));
+	}
+
+	public ProxyFactory(Class<?>... proxyInterfaces) {
+		setInterfaces(proxyInterfaces);
+	}
+
+	public ProxyFactory(Class<?> proxyInterface, Interceptor interceptor) {
+		addInterface(proxyInterface);
+		addAdvice(interceptor);
+	}
+
+	public ProxyFactory(Class<?> proxyInterface, TargetSource targetSource) {
+		addInterface(proxyInterface);
+		setTargetSource(targetSource);
+	}
+
+	public Object getProxy() {
+		return createAopProxy().getProxy();
+	}
+
+	public Object getProxy(@Nullable ClassLoader classLoader) {
+		return createAopProxy().getProxy(classLoader);
+	}
+
+	@SuppressWarnings("unchecked")
+	public static <T> T getProxy(Class<T> proxyInterface, Interceptor interceptor) {
+		return (T) new ProxyFactory(proxyInterface, interceptor).getProxy();
+	}
+
+	@SuppressWarnings("unchecked")
+	public static <T> T getProxy(Class<T> proxyInterface, TargetSource targetSource) {
+		return (T) new ProxyFactory(proxyInterface, targetSource).getProxy();
+	}
+
+  // 获取代理类
+	public static Object getProxy(TargetSource targetSource) {
+		if (targetSource.getTargetClass() == null) {
+			throw new IllegalArgumentException("Cannot create class proxy for TargetSource with null target class");
+		}
+		ProxyFactory proxyFactory = new ProxyFactory();
+		proxyFactory.setTargetSource(targetSource);
+		proxyFactory.setProxyTargetClass(true);
+		return proxyFactory.getProxy();
+	}
+
+}
+```
 
 ## Spring AOP的高级特性
 
-xx
+#### HotSwappableTargetSource
+
+- Spring提供了许多现成的`TargetSource`实现。
+- `HotSwappableTargetSource`使用户可以**以线程安全的方式切换目标对象**，提供所谓的**热交换功能**。
+- `HotSwappableTargetSource`的热交换功能的使用，是需要触发`swap`方法调用，它使用新的target对象来替换原有的target对象。
+- 通过`getTarget`方法，完成了`HotSwappableTargetSource`与AOP的集成。
+
+
+#### 源码
+
+```java
+public class HotSwappableTargetSource implements TargetSource, Serializable {
+
+	private static final long serialVersionUID = 7497929212653839187L;
+
+	private Object target;
+
+	public HotSwappableTargetSource(Object initialTarget) {
+		Assert.notNull(initialTarget, "Target object must not be null");
+		this.target = initialTarget;
+	}
+
+	@Override
+	public synchronized Class<?> getTargetClass() {
+		return this.target.getClass();
+	}
+
+	@Override
+	public final boolean isStatic() {
+		return false;
+	}
+
+	@Override
+	public synchronized Object getTarget() {
+		return this.target;
+	}
+
+	@Override
+	public void releaseTarget(Object target) {
+		// nothing to do
+	}
+
+
+	public synchronized Object swap(Object newTarget) throws IllegalArgumentException {
+		Assert.notNull(newTarget, "Target object must not be null");
+		Object old = this.target;
+		this.target = newTarget;
+		return old;
+	}
+
+
+	@Override
+	public boolean equals(Object other) {
+		return (this == other || (other instanceof HotSwappableTargetSource &&
+				this.target.equals(((HotSwappableTargetSource) other).target)));
+	}
+
+	@Override
+	public int hashCode() {
+		return HotSwappableTargetSource.class.hashCode();
+	}
+
+	@Override
+	public String toString() {
+		return "HotSwappableTargetSource for target: " + this.target;
+	}
+
+}
+```
+
