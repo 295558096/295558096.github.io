@@ -5,7 +5,7 @@
 #### [:heart: Docker基础](/cloud/docker/)
 ## 容器化基础
 
-## K8S基础
+#### [:heart: Kubernetes基础](/cloud/k8s/)
 
 ## KubeSphere集群部署
 
