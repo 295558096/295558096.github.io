@@ -3,9 +3,10 @@
 #### [:heart: 云平台简介](/cloud/base/)
 
 #### [:heart: Docker基础](/cloud/docker/)
-## 容器化基础
 
-#### [:heart: Kubernetes基础](/cloud/k8s/)
+#### [:heart: Kubernetes基础概念](/cloud/k8s/base/)
+
+#### [:heart: Kubernetes核心实战](/cloud/k8s/core/)
 
 ## KubeSphere集群部署
 
