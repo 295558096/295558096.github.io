@@ -598,7 +598,339 @@ protected void initStrategies(ApplicationContext context) {
 
 #### HandlerMapping的配置和设计原理
 
-xx
+- 在初始化完成时，在上下文环境中已定义的所有`HandlerMapping`都已经被加载。
+- 加载的`handlerMappings`被放在一个List中并**被排序**，存储着HTTP请求对应的映射数据。
+- 每一个元素都对应着一个具体handlerMapping的配置，一般每一个`handlerMapping`可以持有**一系列从URL请求到Controller的映射**。
+
+![HandlerMapping](image/HandlerMapping-6015313.png)
+
+##### SimpleUrlHandlerMapping
+
+- `SimpleUrlHandlerMapping`中，定义了一个map来持有一系列的映射关系。
+- 映射关系是通过接口类`HandlerMapping`来封装的。
+- 在`HandlerMapping`接口中定义了一个`getHandler`方法，通过这个方法，可以获得与HTTP请求对应的`HandlerExecutionChain`，在这个`HandlerExecutionChain`中，封装了具体的`Controller`对象。
+
+```java
+public interface HandlerMapping {
+
+	String BEST_MATCHING_HANDLER_ATTRIBUTE = HandlerMapping.class.getName() + ".bestMatchingHandler";
+
+	String LOOKUP_PATH = HandlerMapping.class.getName() + ".lookupPath";
+
+	String PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE = HandlerMapping.class.getName() + ".pathWithinHandlerMapping";
+
+	String BEST_MATCHING_PATTERN_ATTRIBUTE = HandlerMapping.class.getName() + ".bestMatchingPattern";
+
+	String INTROSPECT_TYPE_LEVEL_MAPPING = HandlerMapping.class.getName() + ".introspectTypeLevelMapping";
+
+	String URI_TEMPLATE_VARIABLES_ATTRIBUTE = HandlerMapping.class.getName() + ".uriTemplateVariables";
+
+	String MATRIX_VARIABLES_ATTRIBUTE = HandlerMapping.class.getName() + ".matrixVariables";
+
+	String PRODUCIBLE_MEDIA_TYPES_ATTRIBUTE = HandlerMapping.class.getName() + ".producibleMediaTypes";
+
+  /**
+  * 调用getHandler实际上返回的是一个HandlerExecutionChain，这是典型的Command的模式的使用，这个		 HandlerExecutionChain不但持有handler本身，还包括了处理这个HTTP请求相关的拦截器
+  **/
+  @Nullable
+	HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception;
+
+}
+```
+
+##### HandlerExecutionChain
+
+- 持有一个`Interceptor`链和一个`handler`对象。
+- handler对象实际上就是HTTP请求对应的Controller。
+- 对拦截器链和handler的配置是在`HandlerExecutionChain`的初始化函数中完成的。
+- 为了维护这个拦截器链和handler, HandlerExecutionChain还提供了一系列与拦截器链维护相关一些操作。
+
+```java
+public class HandlerExecutionChain {
+
+	private static final Log logger = LogFactory.getLog(HandlerExecutionChain.class);
+
+	private final Object handler;
+
+	@Nullable
+	private HandlerInterceptor[] interceptors;
+
+	@Nullable
+	private List<HandlerInterceptor> interceptorList;
+
+	private int interceptorIndex = -1;
+
+	public HandlerExecutionChain(Object handler) {
+		this(handler, (HandlerInterceptor[]) null);
+	}
+
+	public HandlerExecutionChain(Object handler, @Nullable HandlerInterceptor... interceptors) {
+		if (handler instanceof HandlerExecutionChain) {
+			HandlerExecutionChain originalChain = (HandlerExecutionChain) handler;
+			this.handler = originalChain.getHandler();
+			this.interceptorList = new ArrayList<>();
+			CollectionUtils.mergeArrayIntoCollection(originalChain.getInterceptors(), this.interceptorList);
+			CollectionUtils.mergeArrayIntoCollection(interceptors, this.interceptorList);
+		}
+		else {
+			this.handler = handler;
+			this.interceptors = interceptors;
+		}
+	}
+
+	public Object getHandler() {
+		return this.handler;
+	}
+
+	public void addInterceptor(HandlerInterceptor interceptor) {
+		initInterceptorList().add(interceptor);
+	}
+
+	public void addInterceptor(int index, HandlerInterceptor interceptor) {
+		initInterceptorList().add(index, interceptor);
+	}
+
+	public void addInterceptors(HandlerInterceptor... interceptors) {
+		if (!ObjectUtils.isEmpty(interceptors)) {
+			CollectionUtils.mergeArrayIntoCollection(interceptors, initInterceptorList());
+		}
+	}
+
+	private List<HandlerInterceptor> initInterceptorList() {
+		if (this.interceptorList == null) {
+			this.interceptorList = new ArrayList<>();
+			if (this.interceptors != null) {
+				// An interceptor array specified through the constructor
+				CollectionUtils.mergeArrayIntoCollection(this.interceptors, this.interceptorList);
+			}
+		}
+		this.interceptors = null;
+		return this.interceptorList;
+	}
+
+	@Nullable
+	public HandlerInterceptor[] getInterceptors() {
+		if (this.interceptors == null && this.interceptorList != null) {
+			this.interceptors = this.interceptorList.toArray(new HandlerInterceptor[0]);
+		}
+		return this.interceptors;
+	}
+
+	boolean applyPreHandle(HttpServletRequest request, HttpServletResponse response) throws Exception {
+		HandlerInterceptor[] interceptors = getInterceptors();
+		if (!ObjectUtils.isEmpty(interceptors)) {
+			for (int i = 0; i < interceptors.length; i++) {
+				HandlerInterceptor interceptor = interceptors[i];
+				if (!interceptor.preHandle(request, response, this.handler)) {
+					triggerAfterCompletion(request, response, null);
+					return false;
+				}
+				this.interceptorIndex = i;
+			}
+		}
+		return true;
+	}
+
+	void applyPostHandle(HttpServletRequest request, HttpServletResponse response, @Nullable ModelAndView mv)
+			throws Exception {
+
+		HandlerInterceptor[] interceptors = getInterceptors();
+		if (!ObjectUtils.isEmpty(interceptors)) {
+			for (int i = interceptors.length - 1; i >= 0; i--) {
+				HandlerInterceptor interceptor = interceptors[i];
+				interceptor.postHandle(request, response, this.handler, mv);
+			}
+		}
+	}
+
+	void triggerAfterCompletion(HttpServletRequest request, HttpServletResponse response, @Nullable Exception ex)
+			throws Exception {
+
+		HandlerInterceptor[] interceptors = getInterceptors();
+		if (!ObjectUtils.isEmpty(interceptors)) {
+			for (int i = this.interceptorIndex; i >= 0; i--) {
+				HandlerInterceptor interceptor = interceptors[i];
+				try {
+					interceptor.afterCompletion(request, response, this.handler, ex);
+				}
+				catch (Throwable ex2) {
+					logger.error("HandlerInterceptor.afterCompletion threw exception", ex2);
+				}
+			}
+		}
+	}
+
+	void applyAfterConcurrentHandlingStarted(HttpServletRequest request, HttpServletResponse response) {
+		HandlerInterceptor[] interceptors = getInterceptors();
+		if (!ObjectUtils.isEmpty(interceptors)) {
+			for (int i = interceptors.length - 1; i >= 0; i--) {
+				if (interceptors[i] instanceof AsyncHandlerInterceptor) {
+					try {
+						AsyncHandlerInterceptor asyncInterceptor = (AsyncHandlerInterceptor) interceptors[i];
+						asyncInterceptor.afterConcurrentHandlingStarted(request, response, this.handler);
+					}
+					catch (Throwable ex) {
+						logger.error("Interceptor [" + interceptors[i] + "] failed in afterConcurrentHandlingStarted", ex);
+					}
+				}
+			}
+		}
+	}
+
+
+	@Override
+	public String toString() {
+		Object handler = getHandler();
+		StringBuilder sb = new StringBuilder();
+		sb.append("HandlerExecutionChain with [").append(handler).append("] and ");
+		if (this.interceptorList != null) {
+			sb.append(this.interceptorList.size());
+		}
+		else if (this.interceptors != null) {
+			sb.append(this.interceptors.length);
+		}
+		else {
+			sb.append(0);
+		}
+		return sb.append(" interceptors").toString();
+	}
+
+}
+```
+
+##### 配置信息的注册过程
+
+- handlerMap注册过程在容器对Bean进行依赖注入时发生，它实际上是通过一个Bean的postProcessor来完成的。
+
+##### SimpleUrlHandlerMapping
+
+```java
+public class SimpleUrlHandlerMapping extends AbstractUrlHandlerMapping {
+
+	private final Map<String, Object> urlMap = new LinkedHashMap<>();
+
+	public SimpleUrlHandlerMapping() {
+	}
+
+	public SimpleUrlHandlerMapping(Map<String, ?> urlMap) {
+		setUrlMap(urlMap);
+	}
+
+	public SimpleUrlHandlerMapping(Map<String, ?> urlMap, int order) {
+		setUrlMap(urlMap);
+		setOrder(order);
+	}
+
+	public void setMappings(Properties mappings) {
+		CollectionUtils.mergePropertiesIntoMap(mappings, this.urlMap);
+	}
+
+	public void setUrlMap(Map<String, ?> urlMap) {
+		this.urlMap.putAll(urlMap);
+	}
+
+	public Map<String, ?> getUrlMap() {
+		return this.urlMap;
+	}
+
+	@Override
+  // 初始化容器，注册handlers
+	public void initApplicationContext() throws BeansException {
+		super.initApplicationContext();
+		registerHandlers(this.urlMap);
+	}
+
+	protected void registerHandlers(Map<String, Object> urlMap) throws BeansException {
+		if (urlMap.isEmpty()) {
+			logger.trace("No patterns in " + formatMappingName());
+		}
+		else {
+      // 递归处理handler和映射规则
+			urlMap.forEach((url, handler) -> {
+				// Prepend with slash if not already present.
+				if (!url.startsWith("/")) {
+					url = "/" + url;
+				}
+				// Remove whitespace from handler bean name.
+				if (handler instanceof String) {
+					handler = ((String) handler).trim();
+				}
+				registerHandler(url, handler);
+			});
+			if (logger.isDebugEnabled()) {
+				List<String> patterns = new ArrayList<>();
+				if (getRootHandler() != null) {
+					patterns.add("/");
+				}
+				if (getDefaultHandler() != null) {
+					patterns.add("/**");
+				}
+				patterns.addAll(getHandlerMap().keySet());
+				logger.debug("Patterns " + patterns + " in " + formatMappingName());
+			}
+		}
+	}
+
+}
+```
+
+##### AbstractUrlHandlerMapping
+
+- `SimpleUrlHandlerMapping`注册过程的完成，很大一部分需要它的基类`AbstractUrlHandlerMapping`来配合。
+- 如果使用Bean的名称作为映射，那么直接从容器中获取这个HTTP映射对应的Bean，然后还要对不同的URL配置进行解析处理。
+- `handlerMap`是一个HashMap，其中保存了URL请求和Controller的映射关系。
+
+`AbstractUrlHandlerMapping#registerHandler`
+
+```java
+protected void registerHandler(String urlPath, Object handler) throws BeansException, IllegalStateException {
+  Assert.notNull(urlPath, "URL path must not be null");
+  Assert.notNull(handler, "Handler object must not be null");
+  Object resolvedHandler = handler;
+
+  // 如果直接用bean名称进行映射，那就直接从容器中获取handler
+  if (!this.lazyInitHandlers && handler instanceof String) {
+    String handlerName = (String) handler;
+    ApplicationContext applicationContext = obtainApplicationContext();
+    if (applicationContext.isSingleton(handlerName)) {
+      resolvedHandler = applicationContext.getBean(handlerName);
+    }
+  }
+
+  Object mappedHandler = this.handlerMap.get(urlPath);
+  if (mappedHandler != null) {
+    if (mappedHandler != resolvedHandler) {
+      throw new IllegalStateException(
+        "Cannot map " + getHandlerDescription(handler) + " to URL path [" + urlPath +
+        "]: There is already " + getHandlerDescription(mappedHandler) + " mapped.");
+    }
+  }
+  else {
+    if (urlPath.equals("/")) {
+      if (logger.isTraceEnabled()) {
+        logger.trace("Root mapping to " + getHandlerDescription(handler));
+      }
+      // 根处理器
+      setRootHandler(resolvedHandler);
+    }
+    else if (urlPath.equals("/*")) {
+      if (logger.isTraceEnabled()) {
+        logger.trace("Default mapping to " + getHandlerDescription(handler));
+      }
+      // 默认处理器
+      setDefaultHandler(resolvedHandler);
+    }
+    else {
+      this.handlerMap.put(urlPath, resolvedHandler);
+      if (logger.isTraceEnabled()) {
+        logger.trace("Mapped [" + urlPath + "] onto " + getHandlerDescription(handler));
+      }
+    }
+  }
+}
+```
+
+
 
 #### 使用HandlerMapping完成请求的映射处理
 
