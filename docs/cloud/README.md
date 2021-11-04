@@ -23,3 +23,10 @@
 #### [:heart: 多租户系统实战](/cloud/kubesphere/multitenant/)
 #### [:heart: 中间件部署实战](/cloud/kubesphere/middleware/)
 #### [:heart: RuoYi-Cloud部署实战](/cloud/kubesphere/ruoyi/)
+
+## 云原生 DevOps 基础与实战
+
+#### [:heart: DevOps基础](/cloud/devops/base/)
+#### [:heart: 尚医通项目上云](/cloud/devops/shangyitong/)
+
+## 微服务基础与实战
