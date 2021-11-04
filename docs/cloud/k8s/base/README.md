@@ -696,10 +696,3 @@ kubectl -n kubernetes-dashboard get secret $(kubectl -n kubernetes-dashboard get
 
 
 
-
-- 
-
-
-
-
-
