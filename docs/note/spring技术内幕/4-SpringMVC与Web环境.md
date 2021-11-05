@@ -930,20 +930,464 @@ protected void registerHandler(String urlPath, Object handler) throws BeansExcep
 }
 ```
 
-
+------
 
 #### 使用HandlerMapping完成请求的映射处理
 
-xx
+- `AbstractHandlerMapping#getHandler`方法会根据初始化时得到的映射关系来生成DispatcherServlet需要的`HandlerExecutionChain`。
+- 
+
+`AbstractHandlerMapping#getHandler`
+
+```java
+@Override
+@Nullable
+public final HandlerExecutionChain getHandler(HttpServletRequest request) throws Exception {
+  Object handler = getHandlerInternal(request);
+  // 默认handler，也就是“/”对应的处理器
+  if (handler == null) {
+    handler = getDefaultHandler();
+  }
+  if (handler == null) {
+    return null;
+  }
+  // 通过bean name获取指定的bean
+  if (handler instanceof String) {
+    String handlerName = (String) handler;
+    handler = obtainApplicationContext().getBean(handlerName);
+  }
+	// 把Handler封装到HandlerExecutionChain中并加上拦截器
+  HandlerExecutionChain executionChain = getHandlerExecutionChain(handler, request);
+	// 
+  if (logger.isTraceEnabled()) {
+    logger.trace("Mapped to " + handler);
+  }
+  else if (logger.isDebugEnabled() && !request.getDispatcherType().equals(DispatcherType.ASYNC)) {
+    logger.debug("Mapped to " + executionChain.getHandler());
+  }
+
+  if (hasCorsConfigurationSource(handler) || CorsUtils.isPreFlightRequest(request)) {
+    CorsConfiguration config = (this.corsConfigurationSource != null ? this.corsConfigurationSource.getCorsConfiguration(request) : null);
+    CorsConfiguration handlerConfig = getCorsConfiguration(handler, request);
+    config = (config != null ? config.combine(handlerConfig) : handlerConfig);
+    executionChain = getCorsHandlerExecutionChain(request, executionChain, config);
+  }
+
+  return executionChain;
+}
+```
+
+##### AbstractUrlHandlerMapping
+
+`AbstractUrlHandlerMapping#getHandlerInternal`
+
+```java
+@Override
+@Nullable
+protected Object getHandlerInternal(HttpServletRequest request) throws Exception {
+  // 获取请求的URL路径
+  String lookupPath = getUrlPathHelper().getLookupPathForRequest(request);
+  request.setAttribute(LOOKUP_PATH, lookupPath);
+  // 将得到的URL路径与Handler进行匹配，得到对应的Handler，如果没有对应的Hanlder，返回null，这样默认的Handler会被使用
+  Object handler = lookupHandler(lookupPath, request);
+  if (handler == null) {
+    // We need to care for the default handler directly, since we need to
+    // expose the PATH_WITHIN_HANDLER_MAPPING_ATTRIBUTE for it as well.
+    Object rawHandler = null;
+    // 根处理器
+    if ("/".equals(lookupPath)) {
+      rawHandler = getRootHandler();
+    }
+    // 默认处理器
+    if (rawHandler == null) {
+      rawHandler = getDefaultHandler();
+    }
+    if (rawHandler != null) {
+      // 根据名称获取bean
+      if (rawHandler instanceof String) {
+        String handlerName = (String) rawHandler;
+        rawHandler = obtainApplicationContext().getBean(handlerName);
+      }
+      validateHandler(rawHandler, request);
+      handler = buildPathExposingHandler(rawHandler, lookupPath, lookupPath, null);
+    }
+  }
+  return handler;
+}
+
+/**
+ * 根据URL路径启动在handlerMap中对handler的检索，并最终返回handler对象
+**/
+@Nullable
+protected Object lookupHandler(String urlPath, HttpServletRequest request) throws Exception {
+  // Direct match?
+  Object handler = this.handlerMap.get(urlPath);
+  if (handler != null) {
+    // Bean name or resolved handler?
+    if (handler instanceof String) {
+      String handlerName = (String) handler;
+      handler = obtainApplicationContext().getBean(handlerName);
+    }
+    validateHandler(handler, request);
+    return buildPathExposingHandler(handler, urlPath, urlPath, null);
+  }
+
+  // Pattern match?
+  List<String> matchingPatterns = new ArrayList<>();
+  for (String registeredPattern : this.handlerMap.keySet()) {
+    if (getPathMatcher().match(registeredPattern, urlPath)) {
+      matchingPatterns.add(registeredPattern);
+    }
+    else if (useTrailingSlashMatch()) {
+      if (!registeredPattern.endsWith("/") && getPathMatcher().match(registeredPattern + "/", urlPath)) {
+        matchingPatterns.add(registeredPattern + "/");
+      }
+    }
+  }
+
+  String bestMatch = null;
+  Comparator<String> patternComparator = getPathMatcher().getPatternComparator(urlPath);
+  if (!matchingPatterns.isEmpty()) {
+    matchingPatterns.sort(patternComparator);
+    if (logger.isTraceEnabled() && matchingPatterns.size() > 1) {
+      logger.trace("Matching patterns " + matchingPatterns);
+    }
+    bestMatch = matchingPatterns.get(0);
+  }
+  if (bestMatch != null) {
+    handler = this.handlerMap.get(bestMatch);
+    if (handler == null) {
+      if (bestMatch.endsWith("/")) {
+        handler = this.handlerMap.get(bestMatch.substring(0, bestMatch.length() - 1));
+      }
+      if (handler == null) {
+        throw new IllegalStateException(
+          "Could not find handler for best pattern match [" + bestMatch + "]");
+      }
+    }
+    // Bean name or resolved handler?
+    if (handler instanceof String) {
+      String handlerName = (String) handler;
+      handler = obtainApplicationContext().getBean(handlerName);
+    }
+    validateHandler(handler, request);
+    String pathWithinMapping = getPathMatcher().extractPathWithinPattern(bestMatch, urlPath);
+
+    // There might be multiple 'best patterns', let's make sure we have the correct URI template variables
+    // for all of them
+    Map<String, String> uriTemplateVariables = new LinkedHashMap<>();
+    for (String matchingPattern : matchingPatterns) {
+      if (patternComparator.compare(bestMatch, matchingPattern) == 0) {
+        Map<String, String> vars = getPathMatcher().extractUriTemplateVariables(matchingPattern, urlPath);
+        Map<String, String> decodedVars = getUrlPathHelper().decodePathVariables(request, vars);
+        uriTemplateVariables.putAll(decodedVars);
+      }
+    }
+    if (logger.isTraceEnabled() && uriTemplateVariables.size() > 0) {
+      logger.trace("URI variables " + uriTemplateVariables);
+    }
+    return buildPathExposingHandler(handler, bestMatch, pathWithinMapping, uriTemplateVariables);
+  }
+
+  // No handler found...
+  return null;
+}
+```
 
 #### Spring MVC对HTTP请求的分发处理
 
-xxx
+- 业务逻辑的调用入口是在handler的`handler`方法中实现的，这里是**连接Spring MVC和应用业务逻辑实现**的地方。
+- `DispatcherServlet#doDispatch` 是对请求处理的实现。
+  - 准备ModelAndView。
+  - 调用getHandler来响应HTTP请求。
+  - 通过执行Handler的处理来得到返回的ModelAndView结果。
+  - 把ModelAndView对象交给相应的视图对象去呈现。
+
+##### doDispatch协同模型和控制器过程
+
+```mermaid
+sequenceDiagram
+participant ds as DispatcherServlet
+participant hm as HandlerMapping
+participant ha as HadnlerAdapter
+participant hi as HandlerInterceptor
+participant vr as ViewResolver
+participant v as View
+
+ds ->> ds: checkMulitipart()
+ds ->> hm: getHandler()
+hm -->> ds: HandlerExecutionChain
+ds ->> hi: preHandler()
+ds ->> ha: handler()
+ha -->> ds: ModelAndView
+ds ->> hi: postHandler()
+ds ->> vr: resolveViewName()
+vr ->> v: getView()
+v -->> ds: View
+ds ->> v: render()
+```
 
 
 
+`DispatcherServlet#doService`
 
+```java
+@Override
+protected void doService(HttpServletRequest request, HttpServletResponse response) throws Exception {
+  // 日志记录
+  logRequest(request);
+
+  // Keep a snapshot of the request attributes in case of an include,
+  // to be able to restore the original attributes after the include.
+  Map<String, Object> attributesSnapshot = null;
+  if (WebUtils.isIncludeRequest(request)) {
+    attributesSnapshot = new HashMap<>();
+    Enumeration<?> attrNames = request.getAttributeNames();
+    while (attrNames.hasMoreElements()) {
+      String attrName = (String) attrNames.nextElement();
+      if (this.cleanupAfterInclude || attrName.startsWith(DEFAULT_STRATEGIES_PREFIX)) {
+        attributesSnapshot.put(attrName, request.getAttribute(attrName));
+      }
+    }
+  }
+
+  // 对HTTP请求参数进行快照处理
+  request.setAttribute(WEB_APPLICATION_CONTEXT_ATTRIBUTE, getWebApplicationContext());
+  request.setAttribute(LOCALE_RESOLVER_ATTRIBUTE, this.localeResolver);
+  request.setAttribute(THEME_RESOLVER_ATTRIBUTE, this.themeResolver);
+  request.setAttribute(THEME_SOURCE_ATTRIBUTE, getThemeSource());
+
+  if (this.flashMapManager != null) {
+    FlashMap inputFlashMap = this.flashMapManager.retrieveAndUpdate(request, response);
+    if (inputFlashMap != null) {
+      request.setAttribute(INPUT_FLASH_MAP_ATTRIBUTE, Collections.unmodifiableMap(inputFlashMap));
+    }
+    request.setAttribute(OUTPUT_FLASH_MAP_ATTRIBUTE, new FlashMap());
+    request.setAttribute(FLASH_MAP_MANAGER_ATTRIBUTE, this.flashMapManager);
+  }
+
+  try {
+    // 分发请求的入口
+    doDispatch(request, response);
+  }
+  finally {
+    if (!WebAsyncUtils.getAsyncManager(request).isConcurrentHandlingStarted()) {
+      // Restore the original attribute snapshot, in case of an include.
+      if (attributesSnapshot != null) {
+        restoreAttributesAfterInclude(request, attributesSnapshot);
+      }
+    }
+  }
+}
+
+/**
+ * 分发请求
+**/
+protected void doDispatch(HttpServletRequest request, HttpServletResponse response) throws Exception {
+  HttpServletRequest processedRequest = request;
+  HandlerExecutionChain mappedHandler = null;
+  boolean multipartRequestParsed = false;
+
+  WebAsyncManager asyncManager = WebAsyncUtils.getAsyncManager(request);
+
+  try {
+    // 定义视图
+    ModelAndView mv = null;
+    Exception dispatchException = null;
+
+    try {
+      processedRequest = checkMultipart(request);
+      multipartRequestParsed = (processedRequest != request);
+
+      // 根据请求得到对应的handler, handler的注册以及getHandler的实现
+      mappedHandler = getHandler(processedRequest);
+      if (mappedHandler == null) {
+        noHandlerFound(processedRequest, response);
+        return;
+      }
+
+      // 获取hanlder适配器
+      HandlerAdapter ha = getHandlerAdapter(mappedHandler.getHandler());
+
+      String method = request.getMethod();
+      boolean isGet = "GET".equals(method);
+      if (isGet || "HEAD".equals(method)) {
+        long lastModified = ha.getLastModified(request, mappedHandler.getHandler());
+        if (new ServletWebRequest(request, response).checkNotModified(lastModified) && isGet) {
+          return;
+        }
+      }
+      // 前置处理器
+      if (!mappedHandler.applyPreHandle(processedRequest, response)) {
+        return;
+      }
+
+      // 调用并处理返回视图
+      mv = ha.handle(processedRequest, response, mappedHandler.getHandler());
+
+      if (asyncManager.isConcurrentHandlingStarted()) {
+        return;
+      }
+			// 默认视图名称
+      applyDefaultViewName(processedRequest, mv);
+      // 后置处理
+      mappedHandler.applyPostHandle(processedRequest, response, mv);
+    }
+    catch (Exception ex) {
+      dispatchException = ex;
+    }
+    catch (Throwable err) {
+      // As of 4.3, we're processing Errors thrown from handler methods as well,
+      // making them available for @ExceptionHandler methods and other scenarios.
+      dispatchException = new NestedServletException("Handler dispatch failed", err);
+    }
+    processDispatchResult(processedRequest, response, mappedHandler, mv, dispatchException);
+  }
+  catch (Exception ex) {
+    triggerAfterCompletion(processedRequest, response, mappedHandler, ex);
+  }
+  catch (Throwable err) {
+    triggerAfterCompletion(processedRequest, response, mappedHandler,
+                           new NestedServletException("Handler processing failed", err));
+  }
+  finally {
+    if (asyncManager.isConcurrentHandlingStarted()) {
+      // Instead of postHandle and afterCompletion
+      if (mappedHandler != null) {
+        mappedHandler.applyAfterConcurrentHandlingStarted(processedRequest, response);
+      }
+    }
+    else {
+      // Clean up any resources used by a multipart request.
+      if (multipartRequestParsed) {
+        cleanupMultipart(processedRequest);
+      }
+    }
+  }
+}
+```
 
 ## Spring MVC视图的呈现
 
-xx
+#### DispatcherServlet视图呈现的设计
+
+- 在DispatcherServlet中，对视图呈现的处理是在`render`方法调用中完成的。
+- 从`ModelAndView`对象中取得视图对象，然后调用视图对象的render方法，由这个视图对象来完成特定的视图呈现工作。
+- 视图解析的过程
+  - 在`ModelAndView`中寻找视图对象的逻辑名。
+  - 已经在`ModelAndView`中设置了视图对象的名称，就对这个名称进行解析，得到实际要使用的视图对象。
+  - ModelAndView中已经有了最终完成视图呈现的视图对象，可以直接使用该视图对象。
+- 不同的视图类型，对应着不同视图对象的实现。
+
+
+`DispatcherServlet#render`
+
+```java
+protected void render(ModelAndView mv, HttpServletRequest request, HttpServletResponse response) throws Exception {
+  // 从request中读取locale信息，并设置response的locale值
+  Locale locale =
+    (this.localeResolver != null ? this.localeResolver.resolveLocale(request) : request.getLocale());
+  response.setLocale(locale);
+
+  View view;
+  // 根据ModleAndView中设置的视图名称进行解析，得到对应的视图对象
+  String viewName = mv.getViewName();
+  if (viewName != null) {
+    // 对视图名进行解析
+    view = resolveViewName(viewName, mv.getModelInternal(), locale, request);
+    if (view == null) {
+      throw new ServletException("Could not resolve view with name '" + mv.getViewName() +
+                                 "' in servlet with name '" + getServletName() + "'");
+    }
+  }
+  else {
+    // 直接从ModelAndView对象中取得实际的视图对象
+    view = mv.getView();
+    if (view == null) {
+      throw new ServletException("ModelAndView [" + mv + "] neither contains a view name nor a " +
+                                 "View object in servlet with name '" + getServletName() + "'");
+    }
+  }
+
+  // Delegate to the View object for rendering.
+  if (logger.isTraceEnabled()) {
+    logger.trace("Rendering view [" + view + "] ");
+  }
+  try {
+    if (mv.getStatus() != null) {
+      response.setStatus(mv.getStatus().value());
+    }
+    // 调用view实现对数据进行呈现，并通过HttpResponse把视图呈现给HTTP客户端
+    view.render(mv.getModelInternal(), request, response);
+  }
+  catch (Exception ex) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Error rendering view [" + view + "]", ex);
+    }
+    throw ex;
+  }
+}
+```
+
+`DispatcherServlet#resolveViewName`
+
+```java
+@Nullable
+protected View resolveViewName(String viewName, @Nullable Map<String, Object> model,
+                               Locale locale, HttpServletRequest request) throws Exception {
+
+  if (this.viewResolvers != null) {
+    for (ViewResolver viewResolver : this.viewResolvers) {
+      View view = viewResolver.resolveViewName(viewName, locale);
+      if (view != null) {
+        return view;
+      }
+    }
+  }
+  return null;
+}
+```
+
+`BeanNameViewResolver#resolveViewName`
+
+```java
+@Override
+@Nullable
+public View resolveViewName(String viewName, Locale locale) throws BeansException {
+  ApplicationContext context = obtainApplicationContext();
+  if (!context.containsBean(viewName)) {
+    // Allow for ViewResolver chaining...
+    return null;
+  }
+  if (!context.isTypeMatch(viewName, View.class)) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Found bean named '" + viewName + "' but it does not implement View");
+    }
+    // Since we're looking into the general ApplicationContext here,
+    // let's accept this as a non-match and allow for chaining as well...
+    return null;
+  }
+  return context.getBean(viewName, View.class);
+}
+```
+
+##### View的继承体系
+
+- JSP/JSTL视图。
+- FreeMaker视图。
+- Velocity视图。
+- PDF、Excel视图等。
+
+![view](image/view.png)
+
+#### JSP视图的实现
+
+xxx
+
+#### ExcelView视图的实现
+
+xxx
+
+#### PDF视图的实现
+
+xxx
