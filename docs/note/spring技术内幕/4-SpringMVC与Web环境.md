@@ -1382,12 +1382,187 @@ public View resolveViewName(String viewName, Locale locale) throws BeansExceptio
 
 #### JSP视图的实现
 
-xxx
+- 在JSP中使用**Jstl**`JSP Standard Tag Library`来丰富JSP的功能，在Spring MVC中就需要使用`JstlView`来作为`View`对象，从而对数据进行视图呈现。
+- `JstlView`没有实现`render`方法，使用的render方法是在它的基类`AbstractView`中实现的。
+  - 基类的render方法实现并不复杂，它主要完成一些数据的准备工作。
+  - `renderMergedOutputModel`是一个模板方法，它的实现在InternalResourceView中完成。
+
+`AbstractView#render`
+
+```java
+@Override
+public void render(@Nullable Map<String, ?> model, HttpServletRequest request,
+                   HttpServletResponse response) throws Exception {
+
+  if (logger.isDebugEnabled()) {
+    logger.debug("View " + formatViewName() +
+                 ", model " + (model != null ? model : Collections.emptyMap()) +
+                 (this.staticAttributes.isEmpty() ? "" : ", static attributes " + this.staticAttributes));
+  }
+	// 把所有的相关信息都收集到一个Map里
+  Map<String, Object> mergedModel = createMergedOutputModel(model, request, response);
+  prepareResponse(request, response);
+  // 展现模型数据到视图的调用方法
+  renderMergedOutputModel(mergedModel, getRequestToExpose(request), response);
+}
+
+protected Map<String, Object> createMergedOutputModel(@Nullable Map<String, ?> model,
+                                                      HttpServletRequest request, HttpServletResponse response) {
+
+  @SuppressWarnings("unchecked")
+  Map<String, Object> pathVars = (this.exposePathVariables ?
+                                  (Map<String, Object>) request.getAttribute(View.PATH_VARIABLES) : null);
+
+  // Consolidate static and dynamic model attributes.
+  int size = this.staticAttributes.size();
+  size += (model != null ? model.size() : 0);
+  size += (pathVars != null ? pathVars.size() : 0);
+
+  Map<String, Object> mergedModel = new LinkedHashMap<>(size);
+  mergedModel.putAll(this.staticAttributes);
+  if (pathVars != null) {
+    mergedModel.putAll(pathVars);
+  }
+  if (model != null) {
+    mergedModel.putAll(model);
+  }
+
+  // Expose RequestContext?
+  if (this.requestContextAttribute != null) {
+    mergedModel.put(this.requestContextAttribute, createRequestContext(request, response, mergedModel));
+  }
+
+  return mergedModel;
+}
+
+protected void prepareResponse(HttpServletRequest request, HttpServletResponse response) {
+  if (generatesDownloadContent()) {
+    response.setHeader("Pragma", "private");
+    response.setHeader("Cache-Control", "private, must-revalidate");
+  }
+}
+```
+
+##### InternalResourceView#renderMergedOutputModel
+
+- `exposeModelAsRequestAttributes`方法将model的属性设置到request的attribute中。
+- `exposeHelper`是一个模板方法，`JstlView`的`exposeHelper`实现包含了对Jstl的相关处理。
+- `prepareForRendering`方法获取并处理url路径。
+
+```java
+@Override
+protected void renderMergedOutputModel(
+  Map<String, Object> model, HttpServletRequest request, HttpServletResponse response) throws Exception {
+
+  // 遍历 model map中的值赋值给request的attribute
+  exposeModelAsRequestAttributes(model, request);
+
+  // Expose helpers as request attributes, if any.
+  exposeHelpers(request);
+
+  // 解析跳转路径
+  String dispatcherPath = prepareForRendering(request, response);
+
+  // 把请求转发到前面获取的内部资源路径中去
+  RequestDispatcher rd = getRequestDispatcher(request, dispatcherPath);
+  if (rd == null) {
+    throw new ServletException("Could not get RequestDispatcher for [" + getUrl() +
+                               "]: Check that the corresponding file exists within your web application archive!");
+  }
+
+  // If already included or response already committed, perform include, else forward.
+  if (useInclude(request, response)) {
+    response.setContentType(getContentType());
+    if (logger.isDebugEnabled()) {
+      logger.debug("Including [" + getUrl() + "]");
+    }
+    rd.include(request, response);
+  }
+
+  else {
+    // 转发请求到内部定义好的资源上
+    if (logger.isDebugEnabled()) {
+      logger.debug("Forwarding to [" + getUrl() + "]");
+    }
+    rd.forward(request, response);
+  }
+}
+
+protected String prepareForRendering(HttpServletRequest request, HttpServletResponse response)
+  throws Exception {
+
+  String path = getUrl();
+  Assert.state(path != null, "'url' not set");
+
+  if (this.preventDispatchLoop) {
+    String uri = request.getRequestURI();
+    if (path.startsWith("/") ? uri.equals(path) : uri.equals(StringUtils.applyRelativePath(uri, path))) {
+      throw new ServletException("Circular view path [" + path + "]: would dispatch back " +
+                                 "to the current handler URL [" + uri + "] again. Check your ViewResolver setup! " +
+                                 "(Hint: This may be the result of an unspecified view, due to default view name generation.)");
+    }
+  }
+  return path;
+}
+```
+
+`JstlView#exposeHelper`
+
+```java
+@Override
+protected void exposeHelpers(HttpServletRequest request) throws Exception {
+  if (this.messageSource != null) {
+    JstlUtils.exposeLocalizationContext(request, this.messageSource);
+  }
+  else {
+    JstlUtils.exposeLocalizationContext(new RequestContext(request, getServletContext()));
+  }
+}
+```
+
+`JstlUtils#exposeLocalizationContext`
+
+```java
+public static void exposeLocalizationContext(HttpServletRequest request, @Nullable MessageSource messageSource) {
+   Locale jstlLocale = RequestContextUtils.getLocale(request);
+   Config.set(request, Config.FMT_LOCALE, jstlLocale);
+   TimeZone timeZone = RequestContextUtils.getTimeZone(request);
+   if (timeZone != null) {
+      Config.set(request, Config.FMT_TIME_ZONE, timeZone);
+   }
+   if (messageSource != null) {
+      LocalizationContext jstlContext = new SpringLocalizationContext(messageSource, request);
+      Config.set(request, Config.FMT_LOCALIZATION_CONTEXT, jstlContext);
+   }
+}
+```
 
 #### ExcelView视图的实现
 
-xxx
+- Spring是使用的Java Excel解决方案来生成Excel文件。
+- 通过与MVC框架的整合，把生成的Excel文件输出到HTTP的Response中。
+- Spring 3.0分别提供了POI和JExcelAPI两个方案在MVC框架中的整合。
+  - `AbstractExcelView`——POI
+  - `AbstractJExcelView`——Java原生
+
+##### POI方案AbstractExcelView
+
+- POI是Apache开源软件项目，通过使用POI的Java API可以直接操作各种文档的数据。
+- POI的对象HSSFWorkbook用来在POI中抽象Excel文件的对象。
+- 将Excel文件输出到客户端
+  - 需要设置HTTP响应的输出类型，以便客户端进行识别。
+  - 把`HSSFWorkbook`对象代表的数据输出到HTTP响应中。
+
+- `AbstractExcelView#renderMergedOutputModel`
 
 #### PDF视图的实现
 
-xxx
+- PDF视图的实现是在`AbstractPdfView`中完成的，Spring使用的也是第三方开源的PDF解决方案`iText`。
+
+## 小结
+
+### SpringMVC 的实现步骤
+
+1. 建立Controller控制器和HTTP请求之间的映射关系。
+2. 在MVC框架接收到HTTP请求的时候，`DispatcherServlet`会根据具体的URL请求信息，在`HandlerMapping`中进行查询，从而得到对应的`HandlerExecutionChain`。
+3. 得到`ModelAndView`以后，`DispatcherServlet`把获得的模型数据交给特定的视图对象，从而完成这些数据的视图呈现工作。
