@@ -749,6 +749,101 @@ protected void prepareSynchronization(DefaultTransactionStatus status, Transacti
 	}
 ```
 
+`AbstractPlatformTransactionManager#handleExistingTransaction`
+
+- 创建事务的时候，事务已经存在，对已存在的事务的进行处理。
+
+```java
+private TransactionStatus handleExistingTransaction(
+  TransactionDefinition definition, Object transaction, boolean debugEnabled)
+  throws TransactionException {
+
+  // 如果当前线程已有事务存在，且当前事务的传播属性设置是never，那么抛出异常
+  if (definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_NEVER) {
+    throw new IllegalTransactionStateException(
+      "Existing transaction found for transaction marked with propagation 'never'");
+  }
+
+  // 如果当前事务的配置属性是PROPAGATION_NOT_SUPPORTED，同时当前线程已经存在事务了，那么将事务挂起
+  if (definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_NOT_SUPPORTED) {
+    if (debugEnabled) {
+      logger.debug("Suspending current transaction");
+    }
+    Object suspendedResources = suspend(transaction);
+    boolean newSynchronization = (getTransactionSynchronization() == SYNCHRONIZATION_ALWAYS);
+    return prepareTransactionStatus(
+      definition, null, false, newSynchronization, debugEnabled, suspendedResources);
+  }
+
+  if (definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_REQUIRES_NEW) {
+    if (debugEnabled) {
+      logger.debug("Suspending current transaction, creating new transaction with name [" +
+                   definition.getName() + "]");
+    }
+    SuspendedResourcesHolder suspendedResources = suspend(transaction);
+    try {
+      return startTransaction(definition, transaction, debugEnabled, suspendedResources);
+    }
+    catch (RuntimeException | Error beginEx) {
+      resumeAfterBeginException(transaction, suspendedResources, beginEx);
+      throw beginEx;
+    }
+  }
+
+  if (definition.getPropagationBehavior() == TransactionDefinition.PROPAGATION_NESTED) {
+    if (!isNestedTransactionAllowed()) {
+      throw new NestedTransactionNotSupportedException(
+        "Transaction manager does not allow nested transactions by default - " +
+        "specify 'nestedTransactionAllowed' property with value 'true'");
+    }
+    if (debugEnabled) {
+      logger.debug("Creating nested transaction with name [" + definition.getName() + "]");
+    }
+    if (useSavepointForNestedTransaction()) {
+      // Create savepoint within existing Spring-managed transaction,
+      // through the SavepointManager API implemented by TransactionStatus.
+      // Usually uses JDBC 3.0 savepoints. Never activates Spring synchronization.
+      DefaultTransactionStatus status =
+        prepareTransactionStatus(definition, transaction, false, false, debugEnabled, null);
+      status.createAndHoldSavepoint();
+      return status;
+    }
+    else {
+      // Nested transaction through nested begin and commit/rollback calls.
+      // Usually only for JTA: Spring synchronization might get activated here
+      // in case of a pre-existing JTA transaction.
+      return startTransaction(definition, transaction, debugEnabled, null);
+    }
+  }
+
+  // Assumably PROPAGATION_SUPPORTS or PROPAGATION_REQUIRED.
+  if (debugEnabled) {
+    logger.debug("Participating in existing transaction");
+  }
+  if (isValidateExistingTransaction()) {
+    if (definition.getIsolationLevel() != TransactionDefinition.ISOLATION_DEFAULT) {
+      Integer currentIsolationLevel = TransactionSynchronizationManager.getCurrentTransactionIsolationLevel();
+      if (currentIsolationLevel == null || currentIsolationLevel != definition.getIsolationLevel()) {
+        Constants isoConstants = DefaultTransactionDefinition.constants;
+        throw new IllegalTransactionStateException("Participating transaction with definition [" +
+                                                   definition + "] specifies isolation level which is incompatible with existing transaction: " +
+                                                   (currentIsolationLevel != null ?
+                                                    isoConstants.toCode(currentIsolationLevel, DefaultTransactionDefinition.PREFIX_ISOLATION) :
+                                                    "(unknown)"));
+      }
+    }
+    if (!definition.isReadOnly()) {
+      if (TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+        throw new IllegalTransactionStateException("Participating transaction with definition [" +
+                                                   definition + "] is not marked as read-only but existing transaction is");
+      }
+    }
+  }
+  boolean newSynchronization = (getTransactionSynchronization() != SYNCHRONIZATION_NEVER);
+  return prepareTransactionStatus(definition, transaction, false, newSynchronization, debugEnabled, null);
+}
+```
+
 
 
 ## Spring事务处理器的设计与实现
