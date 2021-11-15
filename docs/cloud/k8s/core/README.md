@@ -7,7 +7,7 @@
 
 ## Namespace
 
->名称空间用来隔离资源
+>名称空间用来隔离资源，不会隔离网络。
 
 ```bash
 kubectl create ns hello
@@ -23,9 +23,11 @@ metadata:
 
 ## Pod
 
->运行中的一组容器，Pod是kubernetes中应用的最小单位。
+>运行中的**一组**容器，Pod是kubernetes中应用的**最小单位**。
 
 ![pod](image/pod.png)
+
+### 常用命令
 
 ```bash
 kubectl run mynginx --image=nginx
@@ -34,10 +36,10 @@ kubectl run mynginx --image=nginx
 kubectl get pod 
 
 # 描述
-kubectl describe pod 你自己的Pod名字
+kubectl describe pod Pod名字 -n namespace
 
 # 删除
-kubectl delete pod Pod名字
+kubectl delete pod Pod名字 -n namespace
 
 # 查看Pod的运行日志
 kubectl logs Pod名字
@@ -51,6 +53,8 @@ curl 192.168.169.136
 # 集群中的任意一个机器以及任意的应用都能通过Pod分配的ip来访问这个Pod
 ```
 
+### 定义一个pod的资源文件
+
 ```yaml
 apiVersion: v1
 kind: Pod
@@ -58,7 +62,7 @@ metadata:
   labels:
     run: mynginx
   name: mynginx
-#  namespace: default
+# namespace: default
 spec:
   containers:
   - image: nginx
@@ -80,27 +84,42 @@ spec:
     name: tomcat
 ```
 
+### Pod与yaml
+
+```bash
+# 启动pod 
+kubectl apply -f 文件
+# 删除pod
+kubectl delete -f 文件
+```
+
+- 多应用的pod要注意内部应用不要出现端口占用冲突的情况。
+
 ![mypod](image/mypod.png)
 
-***此时的应用还不能外部访问***
+
 
 ## Deployment
 
-> 控制Pod，使Pod拥有多副本，自愈，扩缩容等能力。
+> 控制Pod，使Pod拥有多副本、自愈、扩缩容等能力。
 
 ```bash
 # 清除所有Pod，比较下面两个命令有何不同效果？
 kubectl run mynginx --image=nginx
 
-kubectl create deployment mytomcat --image=tomcat:8.5.68
 # 自愈能力
+kubectl create deployment mytomcat --image=tomcat:8.5.68
 ```
 
 ### 多副本
 
+ 基于命令行
+
 ```bash
 kubectl create deployment my-dep --image=nginx --replicas=3
 ```
+
+基于yaml文件
 
 ```yaml
 apiVersion: apps/v1
@@ -131,8 +150,8 @@ kubectl scale --replicas=5 deployment/my-dep
 ```
 
 ```bash
+# 修改 replicas
 kubectl edit deployment my-dep
-#修改 replicas
 ```
 
 ### 自愈&故障转移
