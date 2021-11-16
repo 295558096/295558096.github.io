@@ -1126,6 +1126,7 @@ private void processRollback(DefaultTransactionStatus status, boolean unexpected
 - 使用`DataSource`创建事务，最终通过设置`Connection`的`AutoCommit`属性来对事务处理进行配置。
 - 在实现过程中，需要把数据库的`Connection`和**当前的线程**进行绑定。
 - 对于事务的提交和回滚，都是通过直接调用`Connection`的提交和回滚来完成的。
+- 使用`DataSourceTransactionManager`实现事务创建、提交和回滚的过程，基本上与单独使用`Connection`实现事务处理是一样的，也是通过设置`autoCommit`属性，调用`Connection`的`commit`和`rollback`方法来完成的。
 
 #### 时序图
 
@@ -1142,7 +1143,7 @@ cl ->> dstm: doBegin()
 dstm ->> dstm: getConnection()
 dstm ->> dsto: setConnectionHolder()
 dstm ->> c: setAutoCommit(false)
-dstm ->> dsto: setMustRestorAutoCommit/setTransactionActive/setTimeoutInSeconds
+dstm ->> dsto: setMustRestoreAutoCommit/setTransactionActive/setTimeoutInSeconds
 dstm ->> tsm: bindResource()
 
 
@@ -1154,6 +1155,7 @@ dstm ->> tsm: bindResource()
 public class DataSourceTransactionManager extends AbstractPlatformTransactionManager
   implements ResourceTransactionManager, InitializingBean {
 
+  // 注入DataSource
   @Nullable
   private DataSource dataSource;
 
@@ -1210,10 +1212,15 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
     return obtainDataSource();
   }
 
+  /**
+    * 创建Transaction
+    * 对数据库而言，事务工作是由Connection来完成的。这里把数据库的Connection对象放到一个ConnectionHolder中，然后封装到一个DataSourceTransactionObject对象中，		 	* 这个封装过程中增加了许多为事务处理服务的控制数据
+   **/
   @Override
   protected Object doGetTransaction() {
     DataSourceTransactionObject txObject = new DataSourceTransactionObject();
     txObject.setSavepointAllowed(isNestedTransactionAllowed());
+    // 获取与当前线程绑定的数据库Connection，这个Connection在第一个事务开始的地方与线程绑定
     ConnectionHolder conHolder =
       (ConnectionHolder) TransactionSynchronizationManager.getResource(obtainDataSource());
     txObject.setConnectionHolder(conHolder, false);
@@ -1221,15 +1228,14 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
   }
 
   @Override
+  // 这里是判断是否已经存在事务的地方，由ConnectionHolder的isTransactionActive属性来控制
   protected boolean isExistingTransaction(Object transaction) {
     DataSourceTransactionObject txObject = (DataSourceTransactionObject) transaction;
     return (txObject.hasConnectionHolder() && txObject.getConnectionHolder().isTransactionActive());
   }
 
-  /**
-	 * This implementation sets the isolation level but ignores the timeout.
-	 */
   @Override
+  // 处理事务开始的地方
   protected void doBegin(Object transaction, TransactionDefinition definition) {
     DataSourceTransactionObject txObject = (DataSourceTransactionObject) transaction;
     Connection con = null;
@@ -1251,6 +1257,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
       txObject.setPreviousIsolationLevel(previousIsolationLevel);
       txObject.setReadOnly(definition.isReadOnly());
       
+      // 数据库Connnection完成事务处理的重要配置，需要把autoCommit属性关掉
       if (con.getAutoCommit()) {
         txObject.setMustRestoreAutoCommit(true);
         if (logger.isDebugEnabled()) {
@@ -1267,7 +1274,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
         txObject.getConnectionHolder().setTimeoutInSeconds(timeout);
       }
 
-      // Bind the connection holder to the thread.
+      // 把当前的数据库Connection和线程绑定
       if (txObject.isNewConnectionHolder()) {
         TransactionSynchronizationManager.bindResource(obtainDataSource(), txObject.getConnectionHolder());
       }
@@ -1282,6 +1289,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
     }
   }
 
+  // 事务挂起
   @Override
   protected Object doSuspend(Object transaction) {
     DataSourceTransactionObject txObject = (DataSourceTransactionObject) transaction;
@@ -1289,11 +1297,13 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
     return TransactionSynchronizationManager.unbindResource(obtainDataSource());
   }
 
+  // 事务恢复
   @Override
   protected void doResume(@Nullable Object transaction, Object suspendedResources) {
     TransactionSynchronizationManager.bindResource(obtainDataSource(), suspendedResources);
   }
 
+  // 事务提交
   @Override
   protected void doCommit(DefaultTransactionStatus status) {
     DataSourceTransactionObject txObject = (DataSourceTransactionObject) status.getTransaction();
@@ -1309,6 +1319,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
     }
   }
 
+  // 事务回滚
   @Override
   protected void doRollback(DefaultTransactionStatus status) {
     DataSourceTransactionObject txObject = (DataSourceTransactionObject) status.getTransaction();
@@ -1324,6 +1335,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
     }
   }
 
+  // 设置事务回滚
   @Override
   protected void doSetRollbackOnly(DefaultTransactionStatus status) {
     DataSourceTransactionObject txObject = (DataSourceTransactionObject) status.getTransaction();
@@ -1334,6 +1346,7 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
     txObject.setRollbackOnly();
   }
 
+  // 清理工作
   @Override
   protected void doCleanupAfterCompletion(Object transaction) {
     DataSourceTransactionObject txObject = (DataSourceTransactionObject) transaction;
@@ -1366,21 +1379,6 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
     txObject.getConnectionHolder().clear();
   }
 
-
-  /**
-	 * Prepare the transactional {@code Connection} right after transaction begin.
-	 * <p>The default implementation executes a "SET TRANSACTION READ ONLY" statement
-	 * if the {@link #setEnforceReadOnly "enforceReadOnly"} flag is set to {@code true}
-	 * and the transaction definition indicates a read-only transaction.
-	 * <p>The "SET TRANSACTION READ ONLY" is understood by Oracle, MySQL and Postgres
-	 * and may work with other databases as well. If you'd like to adapt this treatment,
-	 * override this method accordingly.
-	 * @param con the transactional JDBC Connection
-	 * @param definition the current transaction definition
-	 * @throws SQLException if thrown by JDBC API
-	 * @since 4.3.7
-	 * @see #setEnforceReadOnly
-	 */
   protected void prepareTransactionalConnection(Connection con, TransactionDefinition definition)
     throws SQLException {
 
@@ -1392,10 +1390,6 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
   }
 
 
-  /**
-	 * DataSource transaction object, representing a ConnectionHolder.
-	 * Used as transaction object by DataSourceTransactionManager.
-	 */
   private static class DataSourceTransactionObject extends JdbcTransactionObjectSupport {
 
     private boolean newConnectionHolder;
@@ -1439,3 +1433,34 @@ public class DataSourceTransactionManager extends AbstractPlatformTransactionMan
 }
 ```
 
+### HibernateTransactionManager的实现
+
+- `HibernateTransactionManager`对事务处理的实现，这些最终的事务处理是通过调用`Hibernate`的`Transaction`的`commit`和`rollback`方法来完成的。
+- 使用的`Session`和`Transaction`的取得，因为**涉及并发事务处理**，所以这些对象往往都是与**线程绑定**的，Spring通过一个`SessionHolder`来完成对这些事务对象的管理，并通过`ThreadLocal`对象来实现和线程的绑定。
+
+#### 时序图
+
+```mermaid
+sequenceDiagram
+
+participant c as Client
+participant htm as HibernateTransactionManager
+participant s as Session
+participant t as Transaction
+participant tsm as TransactionSynchronizationManager
+
+c ->> htm: doBegin
+htm ->> s: openSession()
+s -->> htm: session
+htm ->> s: getConnection/getTransaction
+s ->> t: setTimeout()/begin()
+htm ->> tsm: bindResource
+```
+
+## 小结
+
+- 在Spring的声明式事务处理中，采用了IoC容器的Bean配置为事务方法调用提供事务属性设置，从而为应用对事务处理的使用提供方便。
+- 有了声明式的使用方式，可以把对事务处理的实现与应用代码分离出来。
+- 声明式事务处理的大致实现过程
+  - 在为事务处理配置好AOP的基础设施。
+  - 完成对这些事务属性配置的读取。
