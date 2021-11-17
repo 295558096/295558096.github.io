@@ -17,3 +17,4 @@
 - [Spring MVC与Web环境](/note/spring技术内幕/4-SpringMVC与Web环境.md)
 - [数据库操作组件的实现](/note/spring技术内幕/5-数据库操作组件的实现.md)
 - [Spring事务处理的实现](/note/spring技术内幕/6-Spring事务处理的实现.md)
+- [Spring远端调用的实现](/note/spring技术内幕/7-Spring远端调用的实现.md)

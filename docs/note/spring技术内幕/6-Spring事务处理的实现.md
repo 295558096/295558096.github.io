@@ -1460,7 +1460,22 @@ htm ->> tsm: bindResource
 ## 小结
 
 - 在Spring的声明式事务处理中，采用了IoC容器的Bean配置为事务方法调用提供事务属性设置，从而为应用对事务处理的使用提供方便。
-- 有了声明式的使用方式，可以把对事务处理的实现与应用代码分离出来。
-- 声明式事务处理的大致实现过程
-  - 在为事务处理配置好AOP的基础设施。
-  - 完成对这些事务属性配置的读取。
+- 有了声明式的使用方式，可以把对事务处理的**实现**与应用**代码**分离出来。
+- 通过抽象**模板方法**封装不同事务环境下的事务处理。
+
+### Spring声明式事务处理过程
+
+- 在为事务处理配置好AOP的基础设施。
+  - 对应的Proxy代理对象和事务处理Interceptor拦截器对象。
+- 完成对这些事务属性配置的读取。
+
+### 事务核心处理类
+
+- `TransactionInterceptor`  **使用AOP实现声明式事务处理的拦截器**，封装了Spring对**声明式事务处理实现的基本过程**。
+- `TransactionAttributeSource`  `TransactionAttribute`  封装了对声明式事务处理属性的识别，以及信息的读入和配置。
+- `TransactionAttribute`，可以视为**对事务处理属性的数据抽象**，如果在使用声明式事务处理的时候，应用没有配置这些属性，Spring将为用户提供`DefaultTransactionAttribute`对象。
+- `TransactionInfo` `TransactionStatus` 存放**事务处理信息**的主要数据对象，它们通过与线程的绑定来实现**事务的隔离性**。
+  - `TransactionInfo`对象本身就像是**一个栈**，对应着每一次事务方法的调用，它会保存每一次事务方法调用的事务处理信息。
+  - 在`TransactionInfo`对象中，它持有`TransactionStatus`对象，这个TransactionStatus是非常重要的。`TransactionStatus`掌管**事务执行的详细信息**，包括**具体的事务对象**、**事务执行状态**、**事务设置状态**等。在事务的**创建**、**启动**、**提交**和**回滚**的过程中，都需要与这个`TransactionStatus`对象中的数据打交道。
+- `TransactionManager`  进行具体的事务处理。
+- `AbstractPlatformTransactionManager`  在事务处理器完成事务处理的过程中，**与具体事务处理器无关的操作**都被封装`AbstractPlatformTransactionManager`中实现了。
