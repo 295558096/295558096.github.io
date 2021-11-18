@@ -365,12 +365,267 @@ protected RemoteInvocationResult doReadRemoteInvocationResult(ObjectInputStream 
 
 #### 配置HTTP调用器远端服务器端
 
-xxx
+##### 配置
+
+- 通过配置，可以把远端调用服务在服务器端导出，暴露给客户端使用。
+- 需要配置远端服务对应的URL，还需要设置提供服务的Bean。
+- `HttpInvokerServiceExporter`封装了对HTTP协议的处理以及Java对象的序列化功能，然后通过`Proxy`代理类进行封装，从而成为HTTP调用器服务器端的基础设施。
+
+```xml
+<bean name="/remoteServiceURL" class="org.springframework.
+                                      remoting.httpinvoker.HttpInvokerServiceExporter">
+  <property name="service">
+    <ref bean="serviebean"/>
+  </property>
+  <property name="serviceInterface">
+    <value>yourInterface</value>
+  </property>
+</bean>
+```
 
 #### HTTP调用器服务器端的实现
 
-xxx
+- `HttpInvokerServiceExporter`的使用是与Spring MVC结合在一起的，实际上是Spring MVC框架中的一个`Controller`。
+
+##### 时序图
+
+- 在服务器端，`RemoteInvocation`对象是通过从HTTP请求中**反序列化**得到的。
+- 具体的服务执行是由执行器`DefaultRemoteInvocationExecutor`来完成的。
+
+
+
+```mermaid
+sequenceDiagram
+
+participant c as Client
+participant hise as HttpInvokerServiceExporter
+participant ribe as RemoteInvocationBaseExporter
+participant drie as DefaultRemoteInvocationExcutor
+participant ri as RemoteInvocation
+
+c ->> hise: handlerRequest()
+hise ->> hise: readRemoteInvocation
+hise ->> ribe: RemoteInvocationResult()
+ribe ->> drie: invoke()
+drie ->> ri: invoke()
+ri ->> ri: MethodInvocation.invoke()
+ri -->> hise: result
+hise ->> hise: writeRemoteInvocationResult()
+hise -->> c: response
+```
+
+##### HttpInvokerServiceExporter
+
+`HttpInvokerServiceExporter#handleRequest`
+
+- 处理远程调用。
+
+```java
+@Override
+public void handleRequest(HttpServletRequest request, HttpServletResponse response)
+  throws ServletException, IOException {
+
+  try {
+    // 从request中获取RemoteInvocation
+    RemoteInvocation invocation = readRemoteInvocation(request);
+    // 调用并获得结果
+    RemoteInvocationResult result = invokeAndCreateResult(invocation, getProxy());
+    // 将结果写入到响应体中
+    writeRemoteInvocationResult(request, response, result);
+  }
+  catch (ClassNotFoundException ex) {
+    throw new NestedServletException("Class not found during deserialization", ex);
+  }
+}
+```
+
+`HttpInvokerServiceExporter#readRemoteInvocation`
+
+````java
+protected RemoteInvocation readRemoteInvocation(HttpServletRequest request)
+  throws IOException, ClassNotFoundException {
+
+  return readRemoteInvocation(request, request.getInputStream());
+}
+
+protected RemoteInvocation readRemoteInvocation(HttpServletRequest request, InputStream is)
+  throws IOException, ClassNotFoundException {
+
+  ObjectInputStream ois = createObjectInputStream(decorateInputStream(request, is));
+  try {
+    return doReadRemoteInvocation(ois);
+  }
+  finally {
+    ois.close();
+  }
+}
+````
+
+`HttpInvokerServiceExporter#writeRemoteInvocationResult`
+
+- 向响应写入远程结果方法。
+
+- 需要设置响应的`ContentType`属性，设置为`application/x-java-serialized-object`。
+
+```java
+protected void writeRemoteInvocationResult(
+  HttpServletRequest request, HttpServletResponse response, RemoteInvocationResult result)
+  throws IOException {
+
+  response.setContentType(getContentType());
+  writeRemoteInvocationResult(request, response, result, response.getOutputStream());
+}
+```
+
+
+
+##### RemoteInvocationSerializingExporter
+
+`RemoteInvocationSerializingExporter#doReadRemoteInvocation`
+
+- 从流中获取请求对象，并转换成`RemoteInvocation`。
+
+```java
+protected RemoteInvocation doReadRemoteInvocation(ObjectInputStream ois)
+  throws IOException, ClassNotFoundException {
+
+  Object obj = ois.readObject();
+  if (!(obj instanceof RemoteInvocation)) {
+    throw new RemoteException("Deserialized object needs to be assignable to type [" +
+                              RemoteInvocation.class.getName() + "]: " + ClassUtils.getDescriptiveType(obj));
+  }
+  return (RemoteInvocation) obj;
+}
+```
+
+##### RemoteInvocationBasedExporter
+
+`RemoteInvocationBasedExporter#invokeAndCreateResult`
+
+- 调用实际的方法，并把结果转成`RemoteInvocationResult`返回。
+
+```java
+protected RemoteInvocationResult invokeAndCreateResult(RemoteInvocation invocation, Object targetObject) {
+  try {
+    Object value = invoke(invocation, targetObject);
+    return new RemoteInvocationResult(value);
+  }
+  catch (Throwable ex) {
+    return new RemoteInvocationResult(ex);
+  }
+}
+```
+
+`RemoteInvocationBasedExporter#invoke`
+
+- invoke方法通过反射调用代理类的方法。
+
+```java
+protected Object invoke(RemoteInvocation invocation, Object targetObject)
+  throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+
+  if (logger.isTraceEnabled()) {
+    logger.trace("Executing " + invocation);
+  }
+  try {
+    // 调用RemoteInvocationExecutor，这个执行器是DefaultRemoteInvocationExecutor
+    return getRemoteInvocationExecutor().invoke(invocation, targetObject);
+  }
+  catch (NoSuchMethodException ex) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Could not find target method for " + invocation, ex);
+    }
+    throw ex;
+  }
+  catch (IllegalAccessException ex) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Could not access target method for " + invocation, ex);
+    }
+    throw ex;
+  }
+  catch (InvocationTargetException ex) {
+    if (logger.isDebugEnabled()) {
+      logger.debug("Target method failed for " + invocation, ex.getTargetException());
+    }
+    throw ex;
+  }
+}
+```
+
+##### DefaultRemoteInvocationExecutor
+
+`DefaultRemoteInvocationExecutor#invoke`
+
+```java
+@Override
+public Object invoke(RemoteInvocation invocation, Object targetObject)
+  throws NoSuchMethodException, IllegalAccessException, InvocationTargetException{
+
+  Assert.notNull(invocation, "RemoteInvocation must not be null");
+  Assert.notNull(targetObject, "Target object must not be null");
+  return invocation.invoke(targetObject);
+}
+```
+
+##### RemoteInvocation
+
+`RemoteInvocation#invoke`
+
+```java
+public Object invoke(Object targetObject)
+  throws NoSuchMethodException, IllegalAccessException, InvocationTargetException {
+
+  Method method = targetObject.getClass().getMethod(this.methodName, this.parameterTypes);
+  return method.invoke(targetObject, this.arguments);
+}
+```
 
 ### Spring Hession/Burlap的实现原理
 
-xxx
+- `Hession`，Caocho公司开发的轻量级的**二进制协议**。
+- `Burlap`是基于XML协议的一种实现。
+- `Hession`、`Burlap`都是建立在使用HTTP协议的基础上，把HTTP作为其传输数据的基本协议。
+
+#### 设计原理和实现过程
+
+- Spring Hessian/Burlap远端模块的具体设计主要体现。
+  - 客户端封装。
+  - 服务器端的设计。
+- 客户端设计上，`HessianProxyFactoryBean`/`BurlapProxyFactoryBean`和`HessianClientInterceptor`是Spring对Hessian/Burlap进行封装的主要类。
+- 服务器端的设计，Spring提供`HessianServiceExporter`和`BurlapServiceExporter`来简化对Hessian/Burlap服务器的使用。
+- 通过Spring MVC的`DispatcherServlet`将服务请求传递到`HessianSkeleton`/`BurlapSkeleton`服务中，将请求直接交由`Hessian`/`Burlap`处理，完成**特定协议的处理**和**服务对象的调用**，并将服务结果封装到**特定的Hessian/Burlap协议**中去，由网络写回到客户端，从而完成一次完整的服务请求和响应。
+
+#### Hessian/Burlap的配置
+
+##### 客户端配置
+
+```xml
+<bean id="hessianProxy" class="org.springframework.remoting.caucho.
+                              HessianProxyFactoryBean">
+  <property name="serviceUrl">
+    <value>http://yourhost:8080/serviceURL</value>
+  </property>
+  <property name="serviceInterface">
+    <value>yourInterface</value>
+  </property>
+</bean>
+```
+
+##### 服务端配置
+
+```xml
+<bean name="/serviceURL" class="org.springframework.remoting.caucho.
+                                HessianServiceExporter">
+  <property name="service">
+    <ref bean="seviceBean"/>
+  </property>
+  <property name="serviceInterface">
+    <value>yourInterface</value>
+  </property>
+</bean>
+```
+
+#### Hessian客户端的实现
+
+
+
