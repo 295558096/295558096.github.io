@@ -496,7 +496,19 @@ spec:
               number: 8000
 ```
 
+## 网络模型
+
+- Pod封装容器。
+- Service封装Pod。
+- Ingress负载均衡管理Service。
+
 ## 存储抽象
+
+### 概念
+
+- NFS
+  - 网络文件同步系统。
+  - 各个节点都持有同样的存储，实时同步。
 
 ### 环境准备
 
@@ -510,24 +522,26 @@ yum install -y nfs-utils
 #### 主节点
 
 ```bash
-#nfs主节点
+# nfs主节点
 echo "/nfs/data/ *(insecure,rw,sync,no_root_squash)" > /etc/exports
-
+# 创建目录
 mkdir -p /nfs/data
+# 立即开启rpc绑定
 systemctl enable rpcbind --now
+# 立即启动nfs服务器
 systemctl enable nfs-server --now
-#配置生效
+# 配置生效
 exportfs -r
 ```
 
 #### 从节点
 
 ```bash
+# 查询nfs主节点下可以同步的目录
 showmount -e 172.31.0.4
-
-#执行以下命令挂载 nfs 服务器上的共享目录到本机路径 /root/nfsmount
+# 从节点本地创建路径
 mkdir -p /nfs/data
-
+# 执行以下命令挂载 nfs 服务器上的共享目录到本机路径 /root/nfsmount
 mount -t nfs 172.31.0.4:/nfs/data /nfs/data
 # 写入一个测试文件
 echo "hello nfs server" > /nfs/data/test.txt
@@ -567,12 +581,18 @@ spec:
 
 ### PV & PVC
 
-- PV，持久卷`Persistent Volume`，将应用需要持久化的数据保存到指定位置。
-- PVC，持久卷申明`Persistent Volume Claim`，申明需要使用的持久卷规格。
+- PV，持久卷 `Persistent Volume`，将应用需要持久化的数据保存到指定位置。
+- PVC，持久卷申明 `Persistent Volume Claim`，申明需要使用的持久卷规格。
 
 #### 创建PV池
 
 静态供应
+
+- 预创建好指定空间大小的持久卷。
+
+动态供应
+
+- 根据PVC要申请的空间大小动态的创建一个持久卷。
 
 ```bash
 #nfs主节点
@@ -627,6 +647,14 @@ spec:
     server: 172.31.0.4
 ```
 
+查询创建好的PV
+
+```bash
+kubelet get persistentvolume
+
+kubelet get pv
+```
+
 #### PVC创建与绑定
 
 创建PVC
@@ -673,12 +701,15 @@ spec:
       volumes:
         - name: html
           persistentVolumeClaim:
-            claimName: nginx-pvc
+            claimName: nginx-pvc # 申请书名称
 ```
 
 ### ConfigMap
 
 >抽取应用配置，并且可以自动更新。
+
+- 配置文件存储在k8s集群中的etcd数据库中。
+- 配置集更新，引用配置的应用也会更新对应的配置，但是是否能热更新取决于具体应用。
 
 #### Redis
 
@@ -700,6 +731,18 @@ metadata:
   namespace: default
 ```
 
+获取配置集
+
+```bash
+kubectl get cm
+```
+
+编辑配置集
+
+```bash
+kubectl edit cm xxx
+```
+
 ##### 创建Pod
 
 ```yaml
@@ -719,13 +762,13 @@ spec:
     volumeMounts:
     - mountPath: /data
       name: data
-    - mountPath: /redis-master
+    - mountPath: /redis-master # 指向配置集
       name: config
   volumes:
     - name: data
       emptyDir: {}
     - name: config
-      configMap:
+      configMap: # 指定配置集
         name: redis-conf
         items:
         - key: redis.conf
@@ -772,6 +815,8 @@ kubectl exec -it redis -- redis-cli
 
 >Secret 对象类型用来保存敏感信息，例如密码、OAuth 令牌和 SSH 密钥。 将这些信息放在 secret 中比放在 [Pod](https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/) 的定义或者 [容器镜像](https://kubernetes.io/zh/docs/reference/glossary/?all=true#term-image) 中来说更加安全和灵活。
 
+#### 创建秘钥
+
 ```bash
 kubectl create secret docker-registry leifengyang-docker \
 --docker-username=leifengyang \
@@ -786,6 +831,8 @@ kubectl create secret docker-registry regcred \
   --docker-email=<你的邮箱地址>
 ```
 
+#### 使用秘钥
+
 ```yaml
 apiVersion: v1
 kind: Pod
@@ -795,7 +842,7 @@ spec:
   containers:
   - name: private-nginx
     image: leifengyang/guignginx:v1.0
-  imagePullSecrets:
+  imagePullSecrets: # 指定秘钥
   - name: leifengyang-docker
 ```
 
