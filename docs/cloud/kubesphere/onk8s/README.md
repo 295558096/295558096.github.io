@@ -1,5 +1,11 @@
 # Kubernetes 上安装 KubeSphere
 
+## 简介
+
+- 全栈的`Kubernetes`容器云`PaaS`解决方案。
+- `Kubesphere` 是在 `Kubernetes` 之上构建的以**应用为中心**的**多租户容器平台**，提供全栈的IT自动化运维的能力，筒化企业的 DevOps工作流。
+- `Kubesphere`提供了运维友好的向式操界面，帮助企业快速构建一个强大和功能富的容器云平台。
+
 ## 安装流程
 
 - 选择4核8G（master）、8核16G（node1）、8核16G（node2） 三台机器，按量付费进行实验，CentOS7.9。
@@ -159,7 +165,7 @@ kubectl apply -f calico.yaml
 
 ### 加入worker节点
 
-xxx
+
 
 ## 安装 KubeSphere 前置环境
 
@@ -540,8 +546,10 @@ spec:
 ### 下载核心文件
 
 ```bash
+# KubeSphere安装文件
 wget https://github.com/kubesphere/ks-installer/releases/download/v3.1.1/kubesphere-installer.yaml
 
+# KubeSphere集群配置文件
 wget https://github.com/kubesphere/ks-installer/releases/download/v3.1.1/cluster-configuration.yaml
 ```
 
@@ -549,7 +557,7 @@ wget https://github.com/kubesphere/ks-installer/releases/download/v3.1.1/cluster
 
 - 在 `cluster-configuration.yaml` 中指定我们需要开启的功能。
 
-  [参照官网“启用可插拔组件” ](https://kubesphere.com.cn/docs/pluggable-components/overview/)
+  [参照官网“启用可插拔组件” 。](https://kubesphere.com.cn/docs/pluggable-components/overview/)
 
 ### 执行安装
 
