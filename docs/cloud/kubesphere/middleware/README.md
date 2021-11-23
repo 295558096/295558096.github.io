@@ -59,16 +59,16 @@ skip-name-resolve
 ### redis容器启动
 
 ```bash
-#创建配置文件
+# 创建配置文件
 ## 1、准备redis配置文件内容
 mkdir -p /mydata/redis/conf && vim /mydata/redis/conf/redis.conf
 
-##配置示例
+## 配置示例
 appendonly yes
 port 6379
 bind 0.0.0.0
 
-#docker启动redis
+# docker启动redis
 docker run -d -p 6379:6379 --restart=always \
 -v /mydata/redis/conf/redis.conf:/etc/redis/redis.conf \
 -v  /mydata/redis-01/data:/data \
@@ -81,6 +81,8 @@ docker run -d -p 6379:6379 --restart=always \
 ![redis](image/redis.png)
 
 ## 部署ElasticSearch
+
+- 指定子路径，覆盖指定的配置文件，保留其他的配置文件。
 
 ### es容器启动
 
@@ -106,8 +108,10 @@ elasticsearch:7.13.4
 
 ## 应用商店
 
-可以登录应用商店，从应用商店部署。
+- 可以登录应用商店，从应用商店部署。
+
 
 ## 应用仓库
 
-使用企业空间管理员登录，设置应用仓库。
+- 使用企业空间管理员登录，设置应用仓库。
+- 使用应用仓库需要`Helm`相关的知识点。
