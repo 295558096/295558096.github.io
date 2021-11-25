@@ -34,8 +34,25 @@
 
 - 每个微服务准备 `bootstrap.properties`，配置 nacos地址信息。默认使用本地。
 - 每个微服务准备Dockerfile，启动命令，指定线上nacos配置等。
-
 - 每个微服务制作自己镜像。
+
+## 上云流程
+
+### 打包
+
+- 通过maven打jar包。
+
+### 制作镜像
+
+- 编写DockerFile，制作镜像，启动命令中指定生产环境配置文件。
+
+### 推送镜像
+
+- 推送镜像到私有仓库或中央仓库。
+
+### 应用部署
+
+- K8S进行应用部署。
 
 ## 附录
 
@@ -306,15 +323,16 @@ db.password=youdontknow
 
 #### 推送镜像给阿里云
 
-- 开通阿里云`容器镜像服务个人版`
+- 开通阿里云`容器镜像服务个人版`。
 
-- - 创建一个名称空间。
-  - 推送镜像到阿里云镜像仓库。
+- 创建一个名称空间。
 
-- ```bash
+- 推送镜像到阿里云镜像仓库。
+
+  ```bash
   $ docker login --username=forsum**** registry.cn-hangzhou.aliyuncs.com
   
-  #把本地镜像，改名，成符合阿里云名字规范的镜像。
+  # 把本地镜像，改名，成符合阿里云名字规范的镜像。
   $ docker tag [ImageId] registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/镜像名:[镜像版本号]
   ## docker tag 461955fe1e57 registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v1
   
@@ -322,19 +340,21 @@ db.password=youdontknow
   ## docker push registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v1
   ```
 
-- #### ruoyi所有镜像
+  
 
-- ```bash
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-auth:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-file:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-gateway:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-job:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-system:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-ui:v2
-  ```
+#### ruoyi所有镜像
 
-- #### 部署规则
+```bash
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-auth:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-file:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-gateway:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-job:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-system:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-ui:v2
+```
 
-- - 应用一启动会获取到`应用名-激活的环境标识.yml`。
-  - 每次部署应用的时候，需要提前修改nacos线上配置，确认好每个中间件的连接地址是否正确。
+#### 部署规则
+
+- 应用一启动会获取到`应用名-激活的环境标识.yml`。
+- 每次部署应用的时候，需要提前修改nacos线上配置，确认好每个中间件的连接地址是否正确。
