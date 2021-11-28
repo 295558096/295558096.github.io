@@ -13,3 +13,46 @@ DevOps **是一系列做法和工具**，可以使 IT 和软件开发团队之�
 [官方文档](https://kubesphere.com.cn/docs/devops-user-guide/understand-and-manage-devops-projects/overview/)
 
 [内置的Agent](https://kubesphere.com.cn/docs/devops-user-guide/how-to-use/choose-jenkins-agent/)
+
+## Jenkins与KubeSphere
+
+- 通过KubeSphere在图形界面生成流水线JenkinsFile用来编辑和创建项目的流水线的配置。
+
+### Jenkins概念
+
+#### 代理
+
+> 根据要完成的不同功能使用不同的代理。
+
+##### 内置命令
+
+- unzip		
+- which
+- make
+- wget
+- zip
+- bzip2
+- git
+
+
+
+- `base`
+  - 提供稳定CentOS系统及命令。
+- `node`
+  - 提供稳定版的NodeJs环境。
+- `go`
+  - 提供稳定版本的GO语言的环境。
+- `maven`
+  - 提供稳定的JAVA语言环境。
+
+#### 阶段
+
+> 流水线上的某一阶段。
+
+##### 条件
+
+- 触发阶段的条件。
+
+##### 任务
+
+- 满足条件后触发的任务。
