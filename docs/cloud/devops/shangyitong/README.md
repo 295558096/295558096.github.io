@@ -55,7 +55,8 @@ yygh-site																		//挂号平台				[3000]
 
 ### 生产与开发配置隔离
 
-xxx
+- docker打包生产环境的镜像的时候，指定启动命令中启用生产配置。
+
 
 ### deploy.yaml
 
@@ -130,20 +131,21 @@ spec:
 
 ## DevOps 实战
 
-### 修改maven让他从阿里云下载镜像
+### 配置阿里云Maven镜像
 
 - 使用admin登陆ks。
 - 进入集群管理。
 
 - 进入配置中心。
 - 找到配置。
-
-- - [ks-devops-agent](http://139.198.165.238:30880/clusters/default/projects/kubesphere-devops-system/configmaps/ks-devops-agent)。
+  - [ks-devops-agent](http://139.198.165.238:30880/clusters/default/projects/kubesphere-devops-system/configmaps/ks-devops-agent)。
   - 修改配置，加入maven阿里云镜像加速地址。
+
 
 ### 缓存机制
 
-已经下载过的jar包，下一次流水线的启动，不会重复下载。
+- 已经下载过的jar包，下一次流水线的启动，不会重复下载。
+
 
 ### 部署到k8s集群
 
@@ -151,7 +153,7 @@ spec:
 
 - 传入`deploy.yaml`的位置就能部署。
 
-- ```bash
+  ```yaml
   kubectl apply -f xxxx
   ```
 
@@ -170,11 +172,9 @@ spec:
 
 - 每个项目，都有流水线文件。
 - 每次修改完项目，手动点击运行。
-
 - 希望，每次修改完项目，代码推送，流水线能自动运行。
-
-- 1. 写代码并提交到仓库。
+- 使用。
+  1. 写代码并提交到仓库。
   2. 给指定的地方发请求`webhook`。
   3. `kubesphere`平台感知到。
   4. 自动启动流水线继续运行。
-

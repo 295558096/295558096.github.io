@@ -8,12 +8,67 @@
 
 ![download](image/download.png)
 
+## 上云思路
+
+### 中间件
+
+- 有数据。
+- 数据导入。
+
+### 微服务
+
+- 无状态。
+- 制作镜像。
+
+### 网络
+
+- 各种网址分配。
+- 优先走集群内网。
+
+### 配置
+
+- 生产配置分离。
+- URL。
+
 ## 上云优化
 
 - 每个微服务准备 `bootstrap.properties`，配置 nacos地址信息。默认使用本地。
 - 每个微服务准备Dockerfile，启动命令，指定线上nacos配置等。
-
 - 每个微服务制作自己镜像。
+
+## 上云流程
+
+### 打包
+
+- 通过maven打jar包。
+
+### 制作镜像
+
+- 编写DockerFile，制作镜像，启动命令中指定生产环境配置文件。
+
+### 推送镜像
+
+- 推送镜像到私有仓库或中央仓库。
+- `JenkinsFile`从`KubeSphere`中获取到已经添加的凭证信息。
+
+### 应用部署
+
+- K8S进行应用部署。
+  - 需要配置凭证用于在各个节点都能有权限调用`kubelet apply -f xxx`命令。
+  - 秘钥配置在项目下，而不是流水线中。
+
+- 通过`存活探针`判断服务的启动运行情况。
+  - 低版本的Springboot项目在集成K8S的时候，探针失效。
+- 可以通过`DockerFile`中指定容器的启动发送为`NodePort`并指定固定的暴露端口。
+
+
+### 邮件告警
+
+- 需要管理员在KubeSpahere平台预先配置邮箱信息用于全局告警邮件。
+- 配置jenkins的配置中邮箱设置用来在流水线上配置发送邮件。
+- 可以对资源预警、部署失败等情况进行邮件发送。
+
+
 
 ## 附录
 
@@ -284,15 +339,16 @@ db.password=youdontknow
 
 #### 推送镜像给阿里云
 
-- 开通阿里云`容器镜像服务个人版`
+- 开通阿里云`容器镜像服务个人版`。
 
-- - 创建一个名称空间。
-  - 推送镜像到阿里云镜像仓库。
+- 创建一个名称空间。
 
-- ```bash
+- 推送镜像到阿里云镜像仓库。
+
+  ```bash
   $ docker login --username=forsum**** registry.cn-hangzhou.aliyuncs.com
   
-  #把本地镜像，改名，成符合阿里云名字规范的镜像。
+  # 把本地镜像，改名，成符合阿里云名字规范的镜像。
   $ docker tag [ImageId] registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/镜像名:[镜像版本号]
   ## docker tag 461955fe1e57 registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v1
   
@@ -300,19 +356,21 @@ db.password=youdontknow
   ## docker push registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v1
   ```
 
-- #### ruoyi所有镜像
+  
 
-- ```bash
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-auth:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-file:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-gateway:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-job:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-system:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v2
-  docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-ui:v2
-  ```
+#### ruoyi所有镜像
 
-- #### 部署规则
+```bash
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-auth:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-file:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-gateway:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-job:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-system:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-visual-monitor:v2
+docker pull registry.cn-hangzhou.aliyuncs.com/lfy_ruoyi/ruoyi-ui:v2
+```
 
-- - 应用一启动会获取到`应用名-激活的环境标识.yml`。
-  - 每次部署应用的时候，需要提前修改nacos线上配置，确认好每个中间件的连接地址是否正确。
+#### 部署规则
+
+- 应用一启动会获取到`应用名-激活的环境标识.yml`。
+- 每次部署应用的时候，需要提前修改nacos线上配置，确认好每个中间件的连接地址是否正确。
