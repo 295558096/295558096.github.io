@@ -627,5 +627,668 @@ public Object invoke(Object targetObject)
 
 #### Hessian客户端的实现
 
+##### 时序图
 
+```mermaid
+sequenceDiagram
+
+participant c as IOC
+participant hpfb as HessianProxyFactoryBean
+participant sp as serviceProxy
+participant hci as HessianClientInterceptor
+participant hpf as HessianProxyFactory
+
+c ->> hci: afterPropertiesSet()
+hci ->> hpf: createHessianProxy()
+c ->> hpfb: afterPropertiesSet()
+hpfb ->> sp: ProxyFactory.getProxy()
+hpfb ->> sp: MethodCall
+sp ->> hci: invoke()
+hci ->> hpf: invoke()
+hpf -->> sp: result
+```
+
+##### HessianProxyFactoryBean
+
+- `FactoryBean`的主要功能是完成代理Proxy对象的生成和拦截器的设置。
+
+```java
+public class HessianProxyFactoryBean extends HessianClientInterceptor implements FactoryBean<Object> {
+
+   @Nullable
+   // 代理对象
+   private Object serviceProxy;
+
+
+   @Override
+   // 依赖注入完成以后，设置Proxy代理对象
+   public void afterPropertiesSet() {
+      super.afterPropertiesSet();
+      // 通过ProxyFactory生成代理对象，拦截器使用HessianClientInterceptor，因为HessianProxyFactoryBean本身是HessianClientInterceptor的子类，所以这里使用this为代理对象设置拦截器，getServiceInterface取得在BeanDefinition中定义的接口
+      this.serviceProxy = new ProxyFactory(getServiceInterface(), this).getProxy(getBeanClassLoader());
+   }
+
+
+   @Override
+   @Nullable
+   public Object getObject() {
+      return this.serviceProxy;
+   }
+
+   @Override
+   public Class<?> getObjectType() {
+      return getServiceInterface();
+   }
+
+   @Override
+   public boolean isSingleton() {
+      return true;
+   }
+
+}
+```
+
+##### HessianClientInterceptor
+
+`HessianClientInterceptor#invoke`
+
+- 通过Method的反射来实现对Hessian的Proxy代理对象的远程调用。
+- proxy对象是Hessian的一个实现类，而不是通常看到的Java的Proxy代理对象。
+
+```java
+@Override
+@Nullable
+public Object invoke(MethodInvocation invocation) throws Throwable {
+  if (this.hessianProxy == null) {
+    throw new IllegalStateException("HessianClientInterceptor is not properly initialized - " +
+                                    "invoke 'prepare' before attempting any operations");
+  }
+
+  ClassLoader originalClassLoader = overrideThreadContextClassLoader();
+  try {
+    // 通过反射实现远程调用
+    return invocation.getMethod().invoke(this.hessianProxy, invocation.getArguments());
+  }
+  catch (InvocationTargetException ex) {
+    Throwable targetEx = ex.getTargetException();
+    // Hessian 4.0 check: another layer of InvocationTargetException.
+    if (targetEx instanceof InvocationTargetException) {
+      targetEx = ((InvocationTargetException) targetEx).getTargetException();
+    }
+    if (targetEx instanceof HessianConnectionException) {
+      throw convertHessianAccessException(targetEx);
+    }
+    else if (targetEx instanceof HessianException || targetEx instanceof HessianRuntimeException) {
+      Throwable cause = targetEx.getCause();
+      throw convertHessianAccessException(cause != null ? cause : targetEx);
+    }
+    else if (targetEx instanceof UndeclaredThrowableException) {
+      UndeclaredThrowableException utex = (UndeclaredThrowableException) targetEx;
+      throw convertHessianAccessException(utex.getUndeclaredThrowable());
+    }
+    else {
+      throw targetEx;
+    }
+  }
+  catch (Throwable ex) {
+    throw new RemoteProxyFailureException(
+      "Failed to invoke Hessian proxy for remote service [" + getServiceUrl() + "]", ex);
+  }
+  finally {
+    resetThreadContextClassLoader(originalClassLoader);
+  }
+}
+```
+
+`HessianClientInterceptor#afterPropertiesSet`
+
+```java
+@Override
+public void afterPropertiesSet() {
+  super.afterPropertiesSet();
+  prepare();
+}
+// 调用createHessianProxy，这里的proxyFactory是Hessian的类HessianProxyFactory
+public void prepare() throws RemoteLookupFailureException {
+  try {
+    this.hessianProxy = createHessianProxy(this.proxyFactory);
+  }
+  catch (MalformedURLException ex) {
+    throw new RemoteLookupFailureException("Service URL [" + getServiceUrl() + "] is invalid", ex);
+  }
+}
+
+protected Object createHessianProxy(HessianProxyFactory proxyFactory) throws MalformedURLException {
+  Assert.notNull(getServiceInterface(), "'serviceInterface' is required");
+  return proxyFactory.create(getServiceInterface(), getServiceUrl(), getBeanClassLoader());
+}
+```
+
+#### Burlap客户端的实现
+
+- `Burlap`客户端的实现原理和`Hessian`客户端的实现原理是非常类似的。
+- Spring为`Burlap`的使用设计了`BurlapProxyFactoryBean`。
+
+#### Hessian/Burlap服务器端的配置
+
+```xml
+<bean name="/serviceURL" class="org.springframework.remoting.caucho.HessianServiceExporter">
+  <property name="service" ref="sevice"/>
+  <property name="serviceInterface" value="yourInterface"/>
+</bean>
+<bean name="/serviceURL" class="org.springframework.remoting.caucho.BurlapServiceExporter">
+  <property name="service" ref="sevice"/>
+  <property name="serviceInterface" value="yourInterface"/>
+</bean>
+```
+
+#### Hessian服务器端的实现
+
+- `Hessian`通过`HessianServiceExporter`完成服务器端的服务导出。
+- `HessianServiceExporter`接收`handleRequest`方法响应远端客户端发送过来的远端服务请求。
+- 通过`invoke`方法，启动`HessianExporter`和`HessianSkeleton`的本地服务调用。
+
+##### 时序图
+
+- 在准备好HTTP的`Response`之后，服务器端对服务的调用和执行结果的返回都是由`invoke`方法来完成的。
+- invoke方法是在HessianServiceExporter的基类`HessianExporter`中实现的。
+
+```mermaid
+sequenceDiagram
+
+participant cl as client
+participant c as IOC
+participant hse as HessianServiceExport
+participant he as HessianExporter
+participant hs as HessianSkeleton
+
+c ->> he: afterPropertiesSet()
+he ->> he: prepare()
+he ->> hs: new
+
+cl ->> hse: handlerRequest()
+hse ->> he: invoke()
+he ->> hs: invoke()
+hs-->>hse: resp
+
+```
+
+
+
+##### HessianServiceExporter
+
+- `HessianServiceExporter`实际上是Spring MVC框架中的一个`Controller`。
+
+- `HessianServiceExporter`把远端服务整合到Spring MVC框架中，将提供的服务封装到`HttpRequestHandler`的`handleRequest`方法中去完成，从而借助`Spring MVC`的**实现完成服务在服务器端的导出**。
+
+```java
+public class HessianServiceExporter extends HessianExporter implements HttpRequestHandler {
+
+  /**
+	 * Processes the incoming Hessian request and creates a Hessian response.
+	 */
+  @Override
+  public void handleRequest(HttpServletRequest request, HttpServletResponse response)
+    throws ServletException, IOException {
+
+    if (!"POST".equals(request.getMethod())) {
+      throw new HttpRequestMethodNotSupportedException(request.getMethod(),
+                                                       new String[] {"POST"}, "HessianServiceExporter only supports POST requests");
+    }
+		// 设置response的输出类型
+    response.setContentType(CONTENT_TYPE_HESSIAN);
+    try {
+      // 对服务器端的远端对象的方法调用
+      invoke(request.getInputStream(), response.getOutputStream());
+    }
+    catch (Throwable ex) {
+      throw new NestedServletException("Hessian skeleton invocation failed", ex);
+    }
+  }
+
+}
+```
+
+##### HessianExporter
+
+`HessianExporter#prepare`
+
+```java
+public void prepare() {
+  checkService();
+  checkServiceInterface();
+  this.skeleton = new HessianSkeleton(getProxyForService(), getServiceInterface());
+}
+
+protected void checkService() throws IllegalArgumentException {
+  Assert.notNull(getService(), "Property 'service' is required");
+}
+protected void checkServiceInterface() throws IllegalArgumentException {
+  Class<?> serviceInterface = getServiceInterface();
+  Assert.notNull(serviceInterface, "Property 'serviceInterface' is required");
+
+  Object service = getService();
+  if (service instanceof String) {
+    throw new IllegalArgumentException("Service [" + service + "] is a String " +
+                                       "rather than an actual service reference: Have you accidentally specified " +
+                                       "the service bean name as value instead of as reference?");
+  }
+  if (!serviceInterface.isInstance(service)) {
+    throw new IllegalArgumentException("Service interface [" + serviceInterface.getName() +
+                                       "] needs to be implemented by service [" + service + "] of class [" +
+                                       service.getClass().getName() + "]");
+  }
+}
+```
+
+`HessianExporter#invoke`
+
+```java
+public void invoke(InputStream inputStream, OutputStream outputStream) throws Throwable {
+  Assert.notNull(this.skeleton, "Hessian exporter has not been initialized");
+  doInvoke(this.skeleton, inputStream, outputStream);
+}
+
+protected void doInvoke(HessianSkeleton skeleton, InputStream inputStream, OutputStream outputStream)
+  throws Throwable {
+
+  ClassLoader originalClassLoader = overrideThreadContextClassLoader();
+  try {
+    InputStream isToUse = inputStream;
+    OutputStream osToUse = outputStream;
+
+    if (this.debugLogger != null && this.debugLogger.isDebugEnabled()) {
+      try (PrintWriter debugWriter = new PrintWriter(new CommonsLogWriter(this.debugLogger))){
+        @SuppressWarnings("resource")
+        HessianDebugInputStream dis = new HessianDebugInputStream(inputStream, debugWriter);
+        @SuppressWarnings("resource")
+        HessianDebugOutputStream dos = new HessianDebugOutputStream(outputStream, debugWriter);
+        dis.startTop2();
+        dos.startTop2();
+        isToUse = dis;
+        osToUse = dos;
+      }
+    }
+
+    if (!isToUse.markSupported()) {
+      isToUse = new BufferedInputStream(isToUse);
+      isToUse.mark(1);
+    }
+
+    int code = isToUse.read();
+    int major;
+    int minor;
+
+    AbstractHessianInput in;
+    AbstractHessianOutput out;
+		// 判断Hessian的版本
+    if (code == 'H') {
+      // Hessian 2.0 stream
+      major = isToUse.read();
+      minor = isToUse.read();
+      if (major != 0x02) {
+        throw new IOException("Version " + major + '.' + minor + " is not understood");
+      }
+      in = new Hessian2Input(isToUse);
+      out = new Hessian2Output(osToUse);
+      in.readCall();
+    }
+    else if (code == 'C') {
+      // Hessian 2.0 call... for some reason not handled in HessianServlet!
+      isToUse.reset();
+      in = new Hessian2Input(isToUse);
+      out = new Hessian2Output(osToUse);
+      in.readCall();
+    }
+    else if (code == 'c') {
+      // Hessian 1.0 call
+      major = isToUse.read();
+      minor = isToUse.read();
+      in = new HessianInput(isToUse);
+      if (major >= 2) {
+        out = new Hessian2Output(osToUse);
+      }
+      else {
+        out = new HessianOutput(osToUse);
+      }
+    }
+    else {
+      throw new IOException("Expected 'H'/'C' (Hessian 2.0) or 'c' (Hessian 1.0) in hessian input at " + code);
+    }
+
+    in.setSerializerFactory(this.serializerFactory);
+    out.setSerializerFactory(this.serializerFactory);
+    if (this.remoteResolver != null) {
+      in.setRemoteResolver(this.remoteResolver);
+    }
+
+    try {
+      skeleton.invoke(in, out);
+    }
+    finally {
+      try {
+        in.close();
+        isToUse.close();
+      }
+      catch (IOException ex) {
+        // ignore
+      }
+      try {
+        out.close();
+        osToUse.close();
+      }
+      catch (IOException ex) {
+        // ignore
+      }
+    }
+  }
+  finally {
+    resetThreadContextClassLoader(originalClassLoader);
+  }
+}
+```
+
+#### Burlap服务器端的实现
+
+`Burlap`服务器端的封装和使用的实现方式也与`Hessian`非常相似，它也是通过`BurlapServiceExporter`来完成远端服务的导出的。
+
+------
+
+### Spring RMI的实现
+
+#### 设计原理和实现过程
+
+- Spring通过对IoC容器和AOP的使用，为用户提供了**基于RMI机制**的远端调用服务。
+- RMI实现的网络通信实现是基于`TCP/IP`，而不是`HTTP`。
+- 在Spring的RMI实现中，集成了标准的`RMI-JRMP`解决方案，这个方案是**Java虚拟机实现的一部分**，它**使用Java序列化来完成对象的传输**，是一个Java到Java环境的分布式处理技术，因而**不涉及异构平台的处理**。
+- 在Spring RMI中，设计了`RMIProxyFactoryBean`来支持Spring应用对RMI的使用。
+- `RmiClientIntercepter`封装了对**RMI客户端处理**的主要过程和**RMI基础设施**。
+
+#### Spring RMI客户端的配置
+
+```xml
+<bean id="rmiProxy" class="org.springframework.remoting.rmi.RmiProxyFactoryBean">
+  <property name="serviceUrl" value="rmi://YourHostName:1099/YourService"/>
+  <property name="serviceInterface" value="YourServiceInterface"/>
+</bean>
+<bean id="rmiClient" class="yourClass">
+  <property name="YourServiceInterface" ref="rmiProxy"/>
+</bean>
+```
+
+#### Spring RMI客户端的实现
+
+- 通过提供`RMIProxyFactoryBean`完成对客户端的封装。
+
+```java
+public class RmiProxyFactoryBean extends RmiClientInterceptor implements FactoryBean<Object>, BeanClassLoaderAware {
+
+  private Object serviceProxy;
+
+  @Override
+  // 在依赖注入完成以后，容器回调afterPropertiesSet，通过ProxyFactory生成代理对象，这个代理对象的拦截器是RmiClientInterceptor
+  public void afterPropertiesSet() {
+    super.afterPropertiesSet();
+    Class<?> ifc = getServiceInterface();
+    Assert.notNull(ifc, "Property 'serviceInterface' is required");
+    this.serviceProxy = new ProxyFactory(ifc, this).getProxy(getBeanClassLoader());
+  }
+
+  @Override
+  public Object getObject() {
+    return this.serviceProxy;
+  }
+
+  @Override
+  public Class<?> getObjectType() {
+    return getServiceInterface();
+  }
+
+  @Override
+  public boolean isSingleton() {
+    return true;
+  }
+
+}
+```
+
+##### Spring RMI客户端实现的设计时序
+
+- 在拦截器中，首先看到的是对`stub`对象的获取，作为**实现RMI的基本准备**，获取这个stub的实现是在拦截器的`afterPropertiesSet()`方法中完成的。
+- 在实现中，Spring还为这个stub对象提供了**缓存**，从而提高对它的性能。
+
+```mermaid
+```
+
+
+
+##### RmiClientInterceptor
+
+`RmiClientInterceptor#prepare`
+
+```java
+public void prepare() throws RemoteLookupFailureException {
+  // Cache RMI stub on initialization?
+  // stub缓存
+  if (this.lookupStubOnStartup) {
+    Remote remoteObj = lookupStub();
+    if (logger.isDebugEnabled()) {
+      if (remoteObj instanceof RmiInvocationHandler) {
+        logger.debug("RMI stub [" + getServiceUrl() + "] is an RMI invoker");
+      }
+      else if (getServiceInterface() != null) {
+        boolean isImpl = getServiceInterface().isInstance(remoteObj);
+        logger.debug("Using service interface [" + getServiceInterface().getName() +
+                     "] for RMI stub [" + getServiceUrl() + "] - " +
+                     (!isImpl ? "not " : "") + "directly implemented");
+      }
+    }
+    if (this.cacheStub) {
+      this.cachedStub = remoteObj;
+    }
+  }
+}
+
+protected Remote lookupStub() throws RemoteLookupFailureException {
+  try {
+    Remote stub = null;
+    if (this.registryClientSocketFactory != null) {
+      // RMIClientSocketFactory specified for registry access.
+      // Unfortunately, due to RMI API limitations, this means
+      // that we need to parse the RMI URL ourselves and perform
+      // straight LocateRegistry.getRegistry/Registry.lookup calls.
+      URL url = new URL(null, getServiceUrl(), new DummyURLStreamHandler());
+      String protocol = url.getProtocol();
+      if (protocol != null && !"rmi".equals(protocol)) {
+        throw new MalformedURLException("Invalid URL scheme '" + protocol + "'");
+      }
+      String host = url.getHost();
+      int port = url.getPort();
+      String name = url.getPath();
+      if (name != null && name.startsWith("/")) {
+        name = name.substring(1);
+      }
+      Registry registry = LocateRegistry.getRegistry(host, port, this.registryClientSocketFactory);
+      stub = registry.lookup(name);
+    }
+    else {
+      // Can proceed with standard RMI lookup API...
+      stub = Naming.lookup(getServiceUrl());
+    }
+    if (logger.isDebugEnabled()) {
+      logger.debug("Located RMI stub with URL [" + getServiceUrl() + "]");
+    }
+    return stub;
+  }
+  catch (MalformedURLException ex) {
+    throw new RemoteLookupFailureException("Service URL [" + getServiceUrl() + "] is invalid", ex);
+  }
+  catch (NotBoundException ex) {
+    throw new RemoteLookupFailureException(
+      "Could not find RMI service [" + getServiceUrl() + "] in RMI registry", ex);
+  }
+  catch (RemoteException ex) {
+    throw new RemoteLookupFailureException("Lookup of RMI stub failed", ex);
+  }
+}
+```
+
+`RmiClientInterceptor#invoke`
+
+```java
+@Override
+public Object invoke(MethodInvocation invocation) throws Throwable {
+  Remote stub = getStub();
+  try {
+    return doInvoke(invocation, stub);
+  }
+  catch (RemoteConnectFailureException ex) {
+    return handleRemoteConnectFailure(invocation, ex);
+  }
+  catch (RemoteException ex) {
+    if (isConnectFailure(ex)) {
+      return handleRemoteConnectFailure(invocation, ex);
+    }
+    else {
+      throw ex;
+    }
+  }
+}
+
+@Nullable
+protected Object doInvoke(MethodInvocation invocation, Remote stub) throws Throwable {
+  // 执行不同方式的远程调用
+  if (stub instanceof RmiInvocationHandler) {
+    // RMI invoker
+    try {
+      return doInvoke(invocation, (RmiInvocationHandler) stub);
+    }
+    catch (RemoteException ex) {
+      throw RmiClientInterceptorUtils.convertRmiAccessException(
+        invocation.getMethod(), ex, isConnectFailure(ex), getServiceUrl());
+    }
+    catch (InvocationTargetException ex) {
+      Throwable exToThrow = ex.getTargetException();
+      RemoteInvocationUtils.fillInClientStackTraceIfPossible(exToThrow);
+      throw exToThrow;
+    }
+    catch (Throwable ex) {
+      throw new RemoteInvocationFailureException("Invocation of method [" + invocation.getMethod() +
+                                                 "] failed in RMI service [" + getServiceUrl() + "]", ex);
+    }
+  }
+  else {
+    // traditional RMI stub
+    try {
+      return RmiClientInterceptorUtils.invokeRemoteMethod(invocation, stub);
+    }
+    catch (InvocationTargetException ex) {
+      Throwable targetEx = ex.getTargetException();
+      if (targetEx instanceof RemoteException) {
+        RemoteException rex = (RemoteException) targetEx;
+        throw RmiClientInterceptorUtils.convertRmiAccessException(
+          invocation.getMethod(), rex, isConnectFailure(rex), getServiceUrl());
+      }
+      else {
+        throw targetEx;
+      }
+    }
+  }
+}
+```
+
+#### Spring RMI服务器端的配置
+
+```xml
+<bean id="rmiService" class="org.springframework.remoting.rmi.RmiServiceExporter">
+  <property name="service" ref="yourServiceBean"/>
+  <property name="serviceInterface" value="YourServiceInterface"/>
+  <property name="serviceName" value="yourService"/>
+  <property name="registryPort" value="1099"/>
+</bean>
+```
+
+#### Spring RMI服务器端的实现
+
+- 在Spring RMI服务器端，通过`RmiServiceExporter`来导出RMI服务。
+- 在RMI的导出器中，建立RMI服务器端的实现，主要集中在`prepare`方法中，这个方法在`afterPropertiesSet`中调用。
+
+##### RmiServiceExporter
+
+`RmiServiceExporter#prepare`
+
+```java
+public void prepare() throws RemoteException {
+  checkService();
+
+  if (this.serviceName == null) {
+    throw new IllegalArgumentException("Property 'serviceName' is required");
+  }
+
+  // Check socket factories for exported object.
+  if (this.clientSocketFactory instanceof RMIServerSocketFactory) {
+    this.serverSocketFactory = (RMIServerSocketFactory) this.clientSocketFactory;
+  }
+  if ((this.clientSocketFactory != null && this.serverSocketFactory == null) ||
+      (this.clientSocketFactory == null && this.serverSocketFactory != null)) {
+    throw new IllegalArgumentException(
+      "Both RMIClientSocketFactory and RMIServerSocketFactory or none required");
+  }
+
+  // Check socket factories for RMI registry.
+  if (this.registryClientSocketFactory instanceof RMIServerSocketFactory) {
+    this.registryServerSocketFactory = (RMIServerSocketFactory) this.registryClientSocketFactory;
+  }
+  if (this.registryClientSocketFactory == null && this.registryServerSocketFactory != null) {
+    throw new IllegalArgumentException(
+      "RMIServerSocketFactory without RMIClientSocketFactory for registry not supported");
+  }
+
+  this.createdRegistry = false;
+
+  // Determine RMI registry to use.
+  if (this.registry == null) {
+    this.registry = getRegistry(this.registryHost, this.registryPort,
+                                this.registryClientSocketFactory, this.registryServerSocketFactory);
+    this.createdRegistry = true;
+  }
+
+  // Initialize and cache exported object.
+  this.exportedObject = getObjectToExport();
+
+  if (logger.isDebugEnabled()) {
+    logger.debug("Binding service '" + this.serviceName + "' to RMI registry: " + this.registry);
+  }
+
+  // Export RMI object.
+  if (this.clientSocketFactory != null) {
+    UnicastRemoteObject.exportObject(
+      this.exportedObject, this.servicePort, this.clientSocketFactory, this.serverSocketFactory);
+  }
+  else {
+    UnicastRemoteObject.exportObject(this.exportedObject, this.servicePort);
+  }
+
+  // Bind RMI object to registry.
+  try {
+    if (this.replaceExistingBinding) {
+      this.registry.rebind(this.serviceName, this.exportedObject);
+    }
+    else {
+      this.registry.bind(this.serviceName, this.exportedObject);
+    }
+  }
+  catch (AlreadyBoundException ex) {
+    // Already an RMI object bound for the specified service name...
+    unexportObjectSilently();
+    throw new IllegalStateException(
+      "Already an RMI object bound for name '"  + this.serviceName + "': " + ex.toString());
+  }
+  catch (RemoteException ex) {
+    // Registry binding failed: let's unexport the RMI object as well.
+    unexportObjectSilently();
+    throw ex;
+  }
+}
+```
 
