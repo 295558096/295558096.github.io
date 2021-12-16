@@ -14,6 +14,9 @@
 * **框架**
     * [Spring全家桶](/spring/)
     * [主流框架](/framework/)
+* **分布式与互联网**
+  * [分布式](/distributed/)
+  * [互联网](/internet/)
 * **尖子生**
     * [数据库](/db/)
     * [中间件](/middle-ware/)
