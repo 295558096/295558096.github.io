@@ -24,3 +24,4 @@
 * **读书笔记**
     * [《java并发编程的艺术》](/note/java并发编程的艺术/)
     * [《spring技术内幕》](/note/spring技术内幕/)
+    * [《MySQL技术内幕:InnoDB存储引擎》](/note/MySQL技术内幕/)
