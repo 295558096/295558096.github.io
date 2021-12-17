@@ -22,6 +22,7 @@
     * [中间件](/middle-ware/)
 * **内功**
     * [设计模式](/design-patterns/)
+    * [六大设计原则](/design-principles/)
     * [经典理论](/principle/)
     * [算法与数据结构](/data-structure/)
 * **读书笔记**
