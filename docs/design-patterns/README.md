@@ -4,8 +4,8 @@
 
 ## 创建型模式
 - [单例模式](/design-patterns/build/singleton.md)
-- 工厂方法模式
-- 抽象工厂模式
+- [工厂方法模式](/design-patterns/build/factory.md)
+- [抽象工厂模式](/design-patterns/build/abstract-factory.md)
 - 建造者模式
 - 原型模式
 
@@ -20,7 +20,7 @@
 
 ## 行为型模式
 
-- 策略模式
+- [策略模式](/design-patterns/behavioral/strategy.md)
 - 模版方法模式
 - 观察者模式
 - 迭代器模式
