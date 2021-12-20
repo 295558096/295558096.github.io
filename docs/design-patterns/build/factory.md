@@ -50,3 +50,18 @@ public class CarFactory {
 ## 静态工厂
 
 - 不在GOF的23种设计模式中。
+
+## 工厂方法
+
+>Factory Method。
+
+- 在产品维度容易扩展，产生一个新的产品就对应创建一个新的工厂即可。
+- 随着产品类数量的增多，容易造成类爆炸。
+
+### 类图
+
+![BusFactory](image/BusFactory.png)
+
+### 代码
+
+略

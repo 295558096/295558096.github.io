@@ -13,7 +13,8 @@
 - 适配器模式
 - 装饰者模式
 - 代理模式
-- 门面模式（外观模式）
+- [门面模式（外观模式）](/design-patterns/structure/Facade.md)
+- [调停者模式](/design-patterns/structure/Mediator.md)
 - 桥梁模式
 - 组合模式
 - 享元模式
