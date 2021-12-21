@@ -11,7 +11,7 @@
 
 ## 结构型模式
 - 适配器模式
-- 装饰者模式
+- [装饰者模式](/design-patterns/structure/Decorator.md)
 - 代理模式
 - [门面模式（外观模式）](/design-patterns/structure/Facade.md)
 - [调停者模式](/design-patterns/structure/Mediator.md)
@@ -25,7 +25,7 @@
 - 模版方法模式
 - 观察者模式
 - 迭代器模式
-- 责任链模式
+- [责任链模式](/design-patterns/behavioral/ChainOfResponsibility.md)
 - 命令模式
 - 备忘录模式
 - 状态模式
