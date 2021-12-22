@@ -23,7 +23,7 @@
 
 - [策略模式](/design-patterns/behavioral/strategy.md)
 - 模版方法模式
-- 观察者模式
+- [观察者模式](/design-patterns/behavioral/Observer.md)
 - 迭代器模式
 - [责任链模式](/design-patterns/behavioral/ChainOfResponsibility.md)
 - 命令模式
