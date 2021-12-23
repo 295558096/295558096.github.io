@@ -16,7 +16,7 @@
 - [门面模式（外观模式）](/design-patterns/structure/Facade.md)
 - [调停者模式](/design-patterns/structure/Mediator.md)
 - 桥梁模式
-- 组合模式
+- [组合模式](/design-patterns/structure/Composite.md)
 - 享元模式
 
 ## 行为型模式
