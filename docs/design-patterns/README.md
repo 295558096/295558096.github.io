@@ -17,7 +17,7 @@
 - [调停者模式](/design-patterns/structure/Mediator.md)
 - 桥梁模式
 - [组合模式](/design-patterns/structure/Composite.md)
-- 享元模式
+- [享元模式](/design-patterns/structure/Flyweight.md)
 
 ## 行为型模式
 
