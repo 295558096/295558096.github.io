@@ -24,12 +24,12 @@
 - [策略模式](/design-patterns/behavioral/strategy.md)
 - 模版方法模式
 - [观察者模式](/design-patterns/behavioral/Observer.md)
-- 迭代器模式
+- [迭代器模式](/design-patterns/behavioral/Iterator.md)
 - [责任链模式](/design-patterns/behavioral/ChainOfResponsibility.md)
 - 命令模式
 - 备忘录模式
 - 状态模式
-- 访问者模式
+- [访问者模式](/design-patterns/behavioral/Visitor.md)
 - 中介者模式
 - 解释器模式
 

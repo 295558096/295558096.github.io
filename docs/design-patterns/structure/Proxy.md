@@ -118,6 +118,9 @@ public class Client {
 
 - 在程序运行时，动态代理类是运用反射机制创建而成的。在抽象工厂模式的最后有提到用反射来代理switch语句进行选择，这里就运用到了类似的思想。
 - 通过动态代理，我们不再需要手动创建代理类，只需编写一个动态处理器即可，而真正的代理对象由JDK在运行时帮我们创建。
+- 底层使用了ASM框架直接操作**二进制码**，ASM框架本身十分精简，只有几十KB。
+- 通过使用ASM生成代理对象的功能之后，Java才具有“动态语言”的能力。
+- 可以为final的类生成代理类。
 
 ### 创建步骤
 
@@ -197,6 +200,9 @@ public static Object newProxyInstance(ClassLoader loader, Class<?>[] interfaces,
 public class Client {
 
     public static void main(String[] args) {
+      
+      	System.getProperties().put("sun.misc.ProxyGenerator.saveGeneratedFiles", "true");
+      
         Business business = new Business();
 
         //生成代理类对象
@@ -211,10 +217,90 @@ public class Client {
 }
 ```
 
+#### 代理类文件
+
+```java
+package com.sun.proxy;
+
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.lang.reflect.UndeclaredThrowableException;
+import proxy.Moveable;
+
+public final class $Proxy0 extends Proxy implements Moveable {
+    private static Method m1;
+    private static Method m3;
+    private static Method m2;
+    private static Method m0;
+
+    public $Proxy0(InvocationHandler var1) throws  {
+        super(var1);
+    }
+
+    public final boolean equals(Object var1) throws  {
+        try {
+            return (Boolean)super.h.invoke(this, m1, new Object[]{var1});
+        } catch (RuntimeException | Error var3) {
+            throw var3;
+        } catch (Throwable var4) {
+            throw new UndeclaredThrowableException(var4);
+        }
+    }
+
+    public final void run() throws  {
+        try {
+            super.h.invoke(this, m3, (Object[])null);
+        } catch (RuntimeException | Error var2) {
+            throw var2;
+        } catch (Throwable var3) {
+            throw new UndeclaredThrowableException(var3);
+        }
+    }
+
+    public final String toString() throws  {
+        try {
+            return (String)super.h.invoke(this, m2, (Object[])null);
+        } catch (RuntimeException | Error var2) {
+            throw var2;
+        } catch (Throwable var3) {
+            throw new UndeclaredThrowableException(var3);
+        }
+    }
+
+    public final int hashCode() throws  {
+        try {
+            return (Integer)super.h.invoke(this, m0, (Object[])null);
+        } catch (RuntimeException | Error var2) {
+            throw var2;
+        } catch (Throwable var3) {
+            throw new UndeclaredThrowableException(var3);
+        }
+    }
+
+    static {
+        try {
+            m1 = Class.forName("java.lang.Object").getMethod("equals", Class.forName("java.lang.Object"));
+            m3 = Class.forName("proxy.Moveable").getMethod("run");
+            m2 = Class.forName("java.lang.Object").getMethod("toString");
+            m0 = Class.forName("java.lang.Object").getMethod("hashCode");
+        } catch (NoSuchMethodException var2) {
+            throw new NoSuchMethodError(var2.getMessage());
+        } catch (ClassNotFoundException var3) {
+            throw new NoClassDefFoundError(var3.getMessage());
+        }
+    }
+}
+
+```
+
+
+
 ## CGLIB代理
 
 - cglib是一个强大的高性能代码生成包，底层是通过使用一个小而快的字节码处理框架**ASM**来转换并生成新的类，所以我们一般也称之为cglib字节码生成。
 - 与JDK动态代理不同，cglib是针对类来实现代理的，所以对于没有接口的类我们可以**通过cglib字节码生成来实现代理**。原理是对指定的业务类生成一个子类，并覆盖其中的业务方法实现代理。但**因为采用的是继承，所以不能对final修饰的类进行代理**。
+- **CGLIB**的底层使用的也是**ASM**。
 
 ### 使用方式
 
@@ -258,6 +344,28 @@ public class HelloMethodInterceptor implements MethodInterceptor {
 }
 ```
 
+#### 演示
+
+```java
+public class CglibTest {
+
+    public static void main(String[] args) {
+        Enhancer enhancer = new Enhancer();
+        enhancer.setSuperclass(Tank.class);
+        enhancer.setCallback((MethodInterceptor) (o, method, objects, methodProxy) -> {
+            System.out.println("before");
+            Object result = methodProxy.invokeSuper(o, objects);
+            System.out.println("after");
+            return result;
+        });
+        Tank tankProxy = (Tank) enhancer.create();
+        tankProxy.run();
+    }
+}
+```
+
+
+
 #### Client客户端
 
 - 通过`Enhancer`加强类来创建动态代理类，通过它的`setSuperclass()`方法来指定**要代理的业务类**（即为下方生成的代理类指定父类），然后通过`create()`方法生成代理类对象。
@@ -283,3 +391,4 @@ public class Client {
 ## Spring AOP
 
 - 有接口的目标对象采用JDK代理，无接口的目标对象采用cglib代理。
+- 
