@@ -177,3 +177,106 @@ public class Client {
 }
 ```
 
+## 示例代码
+
+### 抽象类球员
+
+```java
+public abstract class Player {
+
+    protected String name;
+
+    public Player(String name) {
+        this.name = name;
+    }
+
+    // 进攻
+    public abstract void attack();
+
+    // 防守
+    public abstract void defense();
+
+}
+```
+
+### 后卫
+
+```java
+public class Guards extends Player {
+
+    public Guards(String name) {
+        super(name);
+    }
+
+    @Override
+    public void attack() {
+        System.out.println("Guards " + name + " attack");
+    }
+
+    @Override
+    public void defense() {
+        System.out.println("Guards " + name + " defense");
+    }
+}
+```
+
+### 外籍中锋
+
+```java
+public class ForeignCenters {
+
+    public ForeignCenters() {}
+
+    protected String name;
+
+    public void attackChinese() {
+        System.out.println("外籍中锋 " + name + " 进攻");
+    }
+
+    public void defenseChinese() {
+        System.out.println("外籍中锋 " + name + " 防守");
+    }
+}
+```
+
+### 翻译官
+
+```java
+public class Transaction extends Player {
+
+    private ForeignCenters foreignCenter = new ForeignCenters();
+
+    public Transaction(String name) {
+        super(name);
+        foreignCenter.name = name;
+    }
+
+    @Override
+    public void attack() {
+        foreignCenter.attackChinese();
+    }
+
+    @Override
+    public void defense() {
+        foreignCenter.defenseChinese();
+    }
+}
+```
+
+### 客户端
+
+```java
+public class AdapterTest {
+
+    public static void main(String[] args) {
+        Player p = new Guards("jaudon");
+        p.attack();
+        p.defense();
+        Player t = new Transaction("yaoming");
+        t.attack();
+        t.defense();
+    }
+
+}
+```
+

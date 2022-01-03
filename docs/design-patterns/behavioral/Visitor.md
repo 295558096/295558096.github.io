@@ -29,7 +29,7 @@
 
 ![img](image/1018770-20190603155455495-565362339.png)
 
-## 代码实现
+## 代码
 
 ### 抽象访问者
 
@@ -142,6 +142,152 @@ public class Client {
         objectStructure.accept(visitor2);
     }
 
+}
+```
+
+## 示例代码
+
+### 抽象类人
+
+```java
+public abstract class Person {
+
+    protected String name;
+
+    public Person(String name) {
+        this.name = name;
+    }
+
+    public abstract void accept(Action action);
+}
+```
+
+### 具体的人
+
+```java
+public class Man extends Person {
+
+    public Man(String name) {
+        super(name);
+    }
+
+    @Override
+    public void accept(Action action) {
+        action.getManConclusion(this);
+    }
+}
+
+public class Woman extends Person {
+
+    public Woman(String name) {
+        super(name);
+    }
+
+    @Override
+    public void accept(Action action) {
+        action.getWomanConclusion(this);
+    }
+}
+```
+
+
+
+### 动作
+
+- 男人女人对于不同事件的响应。
+
+```java
+public interface Action {
+
+    void getManConclusion(Man man);
+
+    void getWomanConclusion(Woman woman);
+
+}
+```
+
+### 具体的响应
+
+```java
+public class Success implements Action {
+
+    @Override
+    public void getManConclusion(Man man) {
+        System.out.println(man.name);
+        System.out.println("男人成功侃侃而谈");
+    }
+
+    @Override
+    public void getWomanConclusion(Woman woman) {
+        System.out.println(woman.name);
+        System.out.println("女人成功谦让礼貌");
+    }
+}
+
+public class Fail implements Action {
+
+    @Override
+    public void getManConclusion(Man man) {
+        System.out.println("男人失败重整旗鼓");
+        System.out.println(man.name);
+    }
+
+    @Override
+    public void getWomanConclusion(Woman woman) {
+        System.out.println("女人失败沮丧沉沦");
+        System.out.println(woman.name);
+    }
+}
+```
+
+### 组织者
+
+```java
+public class ObjectStructure {
+
+    private List<Person> elements = new LinkedList<>();
+
+    // 增加
+    public void attach(Person person) {
+        elements.add(person);
+    }
+
+    // 移除
+    public void detach(Person person) {
+        elements.remove(person);
+    }
+
+    // 查看显示
+    public void display(Action action) {
+        for (Person person : elements) {
+            person.accept(action);
+        }
+    }
+
+}
+```
+
+
+
+### 客户端
+
+```java
+public class VisitorTest {
+
+    public static void main(String[] args) {
+        ObjectStructure objectStructure = new ObjectStructure();
+
+        objectStructure.attach(new Man("nan"));
+        objectStructure.attach(new Woman("nv"));
+
+        // 成功
+        Success success = new Success();
+        objectStructure.display(success);
+
+        // 失败
+        Fail fail = new Fail();
+        objectStructure.display(fail);
+    }
 }
 ```
 
