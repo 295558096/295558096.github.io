@@ -6,16 +6,16 @@
 - [单例模式](/design-patterns/build/singleton.md)
 - [工厂方法模式](/design-patterns/build/factory.md)
 - [抽象工厂模式](/design-patterns/build/abstract-factory.md)
-- 建造者模式
+- [建造者模式](/design-patterns/build/Builder.md)
 - 原型模式
 
 ## 结构型模式
-- 适配器模式
+- [适配器模式](/design-patterns/structure/Adapter.md)
 - [装饰者模式](/design-patterns/structure/Decorator.md)
 - [代理模式](/design-patterns/structure/Proxy.md)
 - [门面模式（外观模式）](/design-patterns/structure/Facade.md)
 - [调停者模式](/design-patterns/structure/Mediator.md)
-- 桥梁模式
+- [桥接模式](/design-patterns/structure/Bridge.md)
 - [组合模式](/design-patterns/structure/Composite.md)
 - [享元模式](/design-patterns/structure/Flyweight.md)
 

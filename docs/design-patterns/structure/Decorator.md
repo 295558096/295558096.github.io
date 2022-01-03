@@ -1,6 +1,6 @@
 # 装饰者模式
 
->Decorator。
+> Decorator。
 
 ## 定义
 
