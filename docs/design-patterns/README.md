@@ -26,7 +26,7 @@
 - [观察者模式](/design-patterns/behavioral/Observer.md)
 - [迭代器模式](/design-patterns/behavioral/Iterator.md)
 - [责任链模式](/design-patterns/behavioral/ChainOfResponsibility.md)
-- 命令模式
+- [命令模式](/design-patterns/behavioral/Command.md)
 - 备忘录模式
 - 状态模式
 - [访问者模式](/design-patterns/behavioral/Visitor.md)
