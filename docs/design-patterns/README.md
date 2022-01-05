@@ -7,7 +7,7 @@
 - [工厂方法模式](/design-patterns/build/factory.md)
 - [抽象工厂模式](/design-patterns/build/abstract-factory.md)
 - [建造者模式](/design-patterns/build/Builder.md)
-- 原型模式
+- [原型模式](/design-patterns/build/Prototype.md)
 
 ## 结构型模式
 - [适配器模式](/design-patterns/structure/Adapter.md)
@@ -27,7 +27,7 @@
 - [迭代器模式](/design-patterns/behavioral/Iterator.md)
 - [责任链模式](/design-patterns/behavioral/ChainOfResponsibility.md)
 - [命令模式](/design-patterns/behavioral/Command.md)
-- 备忘录模式
+- [备忘录模式](/design-patterns/behavioral/Memento.md)
 - 状态模式
 - [访问者模式](/design-patterns/behavioral/Visitor.md)
 - 中介者模式
