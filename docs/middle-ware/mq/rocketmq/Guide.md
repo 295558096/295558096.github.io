@@ -64,7 +64,7 @@
 
 
 
-## 消息中间件需要解决哪些问题
+## 消息中间件要解决的问题
 
 ### Publish / Subscribe
 
@@ -337,7 +337,9 @@ RocketMQ 选择 Linux Ext4 文件系统。
 
 ## 关键特性
 
-#### 单机支持1万以上持久化队列
+### 单机性能
+
+- 单机支持1万以上持久化队列。
 
 - 所有数据单独存储到一个 `Commit Log`，**完全顺序写，随机读**。
 - 对最终用户展现的**队列实际只存储消息在 Commit Log 的位置信息**，并且串行方式刷盘。
@@ -390,3 +392,427 @@ RocketMQ 的所有消息都是持久化的，**先写入系统 PAGECACHE，然�
 - 写入 PAGECACHE 后，线程等待，通知刷盘线程刷盘。
 - 刷盘线程刷盘后，唤醒前端等待线程，可能是一批线程。
 - 前端等待线程向用户返回成功。
+
+### 消息查询
+
+#### 按照 Message Id 查询消息
+
+MessageId的组成
+
+<img src="Guide-image/image-20220106085306772.png" alt="image-20220106085306772" style="zoom:50%;" />
+
+- MsgId 总共 16 字节，包含消息存储主机地址，消息 Commit Log offset。
+- 从 MsgId 中解析出 Broker 的地址和 Commit Log 的偏移地址，然后按照存储格式所在位置消息 buffer 解析成一个完整的消息。
+
+#### 按照 Message Key 查询消息
+
+索引的逻辑结构，类似HashMap的实现。
+
+![image-20220106085511265](Guide-image/image-20220106085511265.png)
+
+1. 根据查询的 key 的 `hashcode%slotNum` 得到具体的槽的位置，`slotNum` 是一个索引文件里面包含的最大槽的数目。
+2. 根据 `slotValue`(slot 位置对应的值)查找到索引项列表的最后一项，倒序排列，`slotValue` 总是指向最新的一个索引项。
+3. 遍历索引项列表返回查询时间范围内的结果集(默认一次最大返回的 32 条记录)。
+4. Hash 冲突。
+   - 寻找 key 的 slot 位置时相当于执行了两次散列函数，一次 key 的 hash，一次 key 的 hash 值取模， 因此返里存在两次冲突的情况。
+   - 第一种，key 的 hash 值不同但模数相同，此时查询的时候会在比较一次 key 的 hash 值（每个索引项保存了 key 的 hash 值），过滤掉 hash 值不相等的项。
+   - 第二种，hash 值相等但 key 不等， 出于性能的考虑冲突的检测放到客户端处理（key 的原始值是存储在消息文件中的，避免对数据文件的解析）， 客户端比较一次消息体的 key 是否相同。
+5. 存储。
+   - 为了节省空间索引项中存储的时间是时间差值（存储时间-开始时间，开始时间存储在索引文件头文件中）。
+   - 整个索引文件是定长的，结构也是固定的。
+
+### 服务器消息过滤
+
+RocketMQ 的消息过滤方式有别于其他消息中间件，是在订阅时，再做过滤。
+
+`Comsume Queue` **单个存储单元结构**。
+
+<img src="Guide-image/image-20220106091108181.png" alt="image-20220106091108181" style="zoom:50%;" />
+
+1. 在 Broker 端进行 Message Tag 比对，先遍历 Consume Queue，如果存储的 Message Tag 与订阅的 Message Tag 不符合，则跳过，继续比对下一个，符合则传输给 Consumer。注意：Message Tag 是字符串形式，**Consume Queue 中存储的是其对应的 hashcode，比对时也是比对 hashcode**。
+2. Consumer 收到过滤后的消息后，同样也要执行在 Broker 端的操作，但是**比对的是真实的 Message Tag 字符串，而不是 Hashcode**。
+
+
+
+设计的如此过滤的原因
+
+- Message Tag 存储 Hashcode，是为了在 Consume Queue **定长方式存储**，节约空间。
+- **过滤过程中不会访问 Commit Log 数据，可以保证堆积情况下也能高效过滤**。
+- 即使存在 Hash 冲突，也可以在 Consumer 端进行修正，保证万无一失。
+
+### 长轮询Pull
+
+- RocketMQ 的 Consumer 都是**从 Broker 拉消息来消费**，但是为了能做到实时收消息，RocketMQ 使用**长轮询**方式，可以保证消息实时性同 Push 方式一致。
+
+- 这种长轮询方式类似于 Web QQ 收发消息机制。
+
+### 顺序消息
+
+#### 顺序消息原理
+
+<img src="Guide-image/image-20220106091843319.png" alt="image-20220106091843319" style="zoom:50%;" />
+
+#### 顺序消息缺陷
+
+- 发送顺序消息无法利用集群 FailOver 特性。
+- 消费顺序消息的并行度依赖于**队列数量**。
+- 队列热点问题，个别队列由于哈希不均导致消息过多，消费速度跟不上，产生消息堆积问题。
+- 遇到消息失败的消息，无法跳过，当前队列消费暂停。
+
+### 事务消息
+
+![image-20220106092124783](Guide-image/image-20220106092124783.png)
+
+### 发送消息负载均衡
+
+<img src="Guide-image/image-20220106092926095.png" alt="image-20220106092926095" style="zoom:50%;" />
+
+- Producer采用了`Roundbin`方式，轮询发送消息到Topic下的每个Queue。
+- 通过增加机器，可以水平扩展队列容量。
+
+### 订阅消息负载均衡
+
+![image-20220106092901825](Guide-image/image-20220106092901825.png)
+
+- 消费者注册后，会消费指定队列中的消息。
+- 可以**水平扩展** Consumer 来提供消费能力。
+- Consumer 数量要小于等于队列数量，如果 Consumer 超过队列数量，那么多余的 Consumer 将不能消费消息。
+
+
+
+负载均衡示例
+
+| 队列数量 | Consumer数量 | Rebalance结果          |
+| -------- | ------------ | ---------------------- |
+| 5        | 2            | C1: 3，C2: 2           |
+| 6        | 3            | C1: 2，C2: 2，C3: 2    |
+| 10       | 20           | C1~C10: 1，C11~C20: 0  |
+| 20       | 6            | C1: 4，C2: 4，c3~C6: 3 |
+
+### 单队列并行消费
+
+<img src="Guide-image/image-20220106093640463.png" alt="image-20220106093640463" style="zoom:50%;" />
+
+- 单队列并行消费采用滑动窗口方式并行消费。
+- 消息在一个**滑动窗口**区间，可以有多个线程并行消费，但是每次提交的 Offset 都是**最小 Offset**。
+
+### 发送定时消息
+
+略
+
+### 消息消费失败，定时重试
+
+略
+
+### HA
+
+高可用方案
+
+- 同步双写。
+- 异步复制。
+  - 异步复制的实现思路非常简单，Slave 启动一个线程，不断从 Master 拉取 `Commit Log` 中的数据，然后在**异步 build 出 Consume Queue 数据结构**。
+  - 整个实现过程基本同 Mysql 主从同步类似。
+
+### 单个JVM进程利用超大内存
+
+<img src="Guide-image/image-20220106094018466.png" alt="image-20220106094018466" style="zoom:50%;" />
+
+1. Producer 发送消息，消息从 socket 迕入 java 堆。
+2. Producer 发送消息，消息从 java 堆转入 PAGACACHE，物理内存。
+3. Producer 发送消息，由**异步线程刷盘**，消息从 PAGECACHE 刷入磁盘。
+4. Consumer 拉消息（正常消费），消息直接从 PAGECACHE（数据在物理内存）转入 socket，到达 consumer， 不经过 java 堆。这种消费场景最多，线上 96G 物理内存，按照 1K 消息算，可以在物理内存缓存 1 亿条消息。
+5. Consumer 拉消息（异常消费），消息直接从 PAGECACHE（数据在虚拟内存）转入 socket。
+6. Consumer 拉消息（异常消费），由于 Socket 访问了虚拟内存，产生缺页中断，此时会产生磁盘 IO，从磁盘 Load 消息到 PAGECACHE，然后直接从 socket 发出去。
+
+### 消息堆积问题解决方法
+
+性能堆积指标
+
+| 被影响的性能指标                   | 堆积性能指标                                              |
+| ---------------------------------- | --------------------------------------------------------- |
+| 消息的堆积容量                     | 依赖磁盘大小                                              |
+| 发消息吞吐量大小                   | 无 SLAVE 情况，会受一定影响 <br />有 SLAVE 情况，不受影响 |
+| 正常消费的Consumer                 | 无 SLAVE 情况，会受一定影响 <br />有 SLAVE 情况，不受影响 |
+| 访问堆积在磁盘的消息时，吞吐量影响 | 与访问的并发有关，最慢会降到 5000 左右                    |
+
+
+
+- 在有 Slave 情况下，Master 一旦发现 Consumer 访问堆积在磁盘的数据时，会向 Consumer 下达一个重定向指令，令 Consumer 从 Slave 拉取数据，这样正常的发消息不正常消费的 Consumer 都不会因为消息堆积受影响，因为**系统将堆积场景与非堆积场景分割在了两个不同的节点处理**。
+- Slave 不会写性能下降。Slave 的消息写入只追求吞吐量，不追求实时性，只要整体的吞吐量高就可以。
+- Slave 每次都是从 Master 拉取一批数据，如 1M，这种批量顺序写入方式即使堆积情况，整体吞吐量影响相对较小，只是**写入 RT 会变长**。
+
+
+
+## 消息过滤
+
+### 简单消息过滤
+
+- 简单消息过滤通过指定多个 Tag 来过滤消息，过滤动作在服务器进行。
+
+#### 高级消息过滤
+
+<img src="Guide-image/image-20220106102109496.png" alt="image-20220106102109496" style="zoom:50%;" />
+
+- Broker 所在的机器会启动多个 `FilterServer` 过滤进程。
+- **Consumer 启动后，会向 FilterServer 上传一个过滤的 Java 类。**
+- Consumer 从 FilterServer 拉消息，FilterServer 将请求转发给 Broker，FilterServer 从 Broker 收到消息后，按照 Consumer 上传的 Java 过滤程序做过滤，过滤完成后返回给 Consumer。
+
+
+
+方案总结
+
+- 使用 CPU 资源来换取网卡流量资源。
+- FilterServer 与 Broker 部署在同一台机器，数据通过本地回环通信，不走网卡。
+- 一台 Broker 部署多个 FilterServer，充分利用 CPU 资源，因为单个 Jvm 难以全面利用高配的物理机 CPU 资源。
+- 因为过滤代码使用 Java 语言来编写，应用几乎可以做任意形式的服务器端消息过滤。
+- 使用 Java 诧言迕行作为过滤表达式是一个双刃剑，方便了应用的过滤操作，但是带来了服务器端的**安全风险**。 需要应用来保证过滤代码安全，例如在过滤程序里尽可能不做申请大内存，创建线程等操作。避免 Broker 服 务器发生资源泄漏。
+
+
+
+## 通讯组件
+
+- RocketMQ 通信组件使用了 `Netty-4.0.9.Final`，在之上做了简单的协议封装。
+
+### 网络协议
+
+<img src="Guide-image/image-20220106102736010.png" alt="image-20220106102736010" style="zoom:50%;" />
+
+1. 大端 4 个字节整数，等于 2、3、4 长度总和。
+2. 大端 4 个字节整数，等于 3 的长度。
+3. 使用 json 序列化数据。
+4. 应用自定义二进制序列化数据。
+
+#### Header格式
+
+```json
+{
+    "code":0,
+    "language":"JAVA",
+    "version":0,
+    "opaque":0,
+    "flag":1,
+    "remark":"hello, I am respponse /127.0.0.1:27603",
+    "extFields":{
+        "count":"0",
+        "messageTitle":"HelloMessageTitle"
+    }
+}
+```
+
+| Header字段名 | 类型                   | Request                                                      | Response                                        |
+| ------------ | ---------------------- | ------------------------------------------------------------ | ----------------------------------------------- |
+| code         | 整数                   | 请求操作代码，请求接收方根据不同的代码做不同的操作           | 应答结果代码，0 表示成功，非 0 表示各种错误代码 |
+| language     | 字符串                 | 请求发起方实现语言，默认 JAVA                                | 应答接收方实现语言                              |
+| version      | 整数                   | 请求发起方程序版本                                           | 应答接收方程序版本                              |
+| opaque       | 整数                   | 请求发起方在同一连接上不同的请求标识代码，多线程连接复用使用 | 应答方不做修改，直接返回                        |
+| flag         | 整数                   | 通信层的标志位                                               | 通信层的标志位                                  |
+| remark       | 字符串                 | 传输自定义文本信息                                           | 错误详细描述信息                                |
+| extFields    | HashMap<String,String> | 请求自定义字段                                               | 应答自定义字段                                  |
+
+### 心跳处理
+
+- 通信组件本身不处理心跳，由上层进行心跳处理。
+
+### 连接复用
+
+- 同一个网络连接，客户端多个线程可以同时发送请求，应答响应通过 `header` 中的 `opaque` 字段来标识。
+
+### 超时连接
+
+- 如果某个连接超过特定时间没有活动（无读写事件），则自动关闭此连接，并通知上层业务，清除连接对应的注册信息。
+
+
+
+## 服务发现
+
+>Name Server。
+
+- Name Server 是专为 RocketMQ 设计的**轻量级名称服务**，代码小于 1000 行，具有简单、**可集群横向扩展**、**无状态**等特点。
+- **RocketMQ 将要支持的主备自动切换功能会强依赖 Name Server。**
+
+
+
+## 客户端使用指南
+
+### 客户端如何寻址
+
+RocketMQ 有多种配置方式可以令客户端找到 Name Server，然后通过 Name Server 再找到 Broker。优先级由高到低，高优先级会覆盖低优先级。
+
+#### 代码中指定
+
+```java
+producer.setNamesrvAddr("192.168.0.1:9876;192.168.0.2:9876");
+consumer.setNamesrvAddr("192.168.0.1:9876;192.168.0.2:9876");
+```
+
+#### Java 启动参数中指定
+
+```sh
+-Drocketmq.namesrv.addr=192.168.0.1:9876;192.168.0.2:9876
+```
+
+#### 环境变量指定
+
+```sh
+export NAMESRV_ADDR=192.168.0.1:9876;192.168.0.2:9876
+```
+
+#### HTTP 静态服务器寻址
+
+- 默认的方式。
+- 客户端启动后，会定时访问一个静态 HTTP 服务器，`http://jmenv.tbsite.net:8080/rocketmq/nsaddr`。
+
+- 客户端默认每隔 2 分钟访问一次这个 HTTP 服务器，并更新本地的 Name Server 地址。
+
+- URL 已经在代码中写死，可通过修改 `/etc/hosts` 文件来改发要访问的服务器，例如在`/etc/hosts` 增加如下配置。
+
+  ```sh
+  10.232.22.67  jmenv.taobao.net
+  ```
+
+- **推荐使用 HTTP 静态服务器寻址方式，好处是客户端部署简单，丏 Name Server 集群可以热升级。**
+
+### 自定义客户端行为
+
+#### 客户端API形式
+
+- `DefaultMQProducer`、`TransactionMQProducer`、`DefaultMQPushConsumer`、`DefaultMQPullConsumer` 都继承于 `ClientConfig` 类，`ClientConfig` 为客户端的公共配置类。
+
+- 客户端的配置都是 get、set 形式，每个参数都可以用 spring 来配置，也可以在代码中配置。
+
+#### 客户端的公共配置
+
+| 参数名                        | 默认值  | 说明                                                         |
+| ----------------------------- | ------- | ------------------------------------------------------------ |
+| namesrvAddr                   |         | Name Server 地址列表，多个 NameServer 地址用分号隔开。       |
+| clientIP                      | 本机IP  | 客户端本机 IP 地址，某些机器会发生无法识别客户端 IP 地址情况，需要应用在代码中强制指定 |
+| instanceName                  | DEFAULT | 客户端实例名称，客户端创建的多个 Producer、 Consumer 实际是共用一个内部实例（这个实例包含网络连接、线程资源等） |
+| clientCallbackExecutorThreads | 4       | 通信层异步回调线程数                                         |
+| pollNameServerInteval         | 30000   | 轮询 Name Server 间隔时间，单位毫秒                          |
+| heartbeatBrokerInterval       | 30000   | 向 Broker 发送心跳间隔时间，单位毫秒                         |
+| persistConsumerOffsetInterval | 5000    | 持久化 Consumer 消费进度间隔时间，单位毫秒                   |
+
+
+
+#### Producer 配置
+
+| 参数名                           | 默认值           | 说明                                                         |
+| -------------------------------- | ---------------- | ------------------------------------------------------------ |
+| producerGroup                    | DEFAULT_PRODUCER | Producer 组名，多个 Producer 如果属于一个应用，发送同样的消息，则应该将它们归为同一组 |
+| createTopicKey                   | TBW102           | 在发送消息时，自动创建服务器不存在的 topic，需要指定 Key     |
+| defaultTopicQueueNums            | 4                | 在发送消息时，自动创建服务器不存在的 topic，默认创建的队列数 |
+| sendMsgTimeout                   | 10000            | 发送消息超时时间，单位毫秒                                   |
+| compressMsgBodyOverHowmuch       | 4096             | 消息 Body 超过多大开始压缩(Consumer 收到消息会自动解压缩)，单位字节 |
+| retryAnotherBrokerWhenNotStoreOK | FALSE            | 如果发送消息返回 sendResult，但是 `sendStatus!=SEND_OK`，是否重试发送 |
+| maxMessageSize                   | 131072           | 客户端限制的消息大小，超过报错，同时服务端也会限制，128K     |
+| transactionCheckListener         |                  | 事务消息回查监听器，如果发送事务消息， 必须设置              |
+| checkThreadPoolMinSize           | 1                | Broker 回查 Producer 事务状态时，线程池大小                  |
+| checkThreadPoolMaxSize           | 1                | Broker 回查 Producer 事务状态时，线程池大小                  |
+| checkRequestHoldMax              | 2000             | Broker 回查 Producer 事务状态时， Producer 本地缓冲请求队列大小 |
+
+
+
+#### PushConsumer 配置
+
+| 参数名                       | 默认值                        | 说明                                                         |
+| ---------------------------- | ----------------------------- | ------------------------------------------------------------ |
+| consumerGroup                | DEFAULT_CONSUMER              | Consumer 组名，多个 Consumer 如果属于一个应用，订阅同样的消息，且消费逻辑一致，则应该将它们归为同一组 |
+| messageModel                 | CLUSTERING                    | 消息模型，支持以下两种 1、集群消费 2、广播消费               |
+| consumeFromWhere             | CONSUME_FROM_LAST_OFFSET      | Consumer 启动后，默认从什么位置开始消费                      |
+| allocateMessageQueueStrategy | AllocateMessageQueueAveragely | Rebalance 算法实现策略                                       |
+| subscription                 | {}                            | 订阅关系                                                     |
+| messageListener              |                               | 消息监听器                                                   |
+| offsetStore                  |                               | 消费进度存储                                                 |
+| consumeThreadMin             | 10                            | 消费线程池数量                                               |
+| consumeThreadMax             | 20                            | 消费线程池数量                                               |
+| consumeConcurrentlyMaxSpan   | 2000                          | 单队列并行消费允许的最大跨度                                 |
+| pullThresholdForQueue        | 1000                          | 拉消息本地队列缓存消息最大数                                 |
+| pullInterval                 | 0                             | 拉消息间隔，由于是长轮询，所以 为 0，但是如果应用为了流控，也 可以设置大于 0 的值，单位毫秒 |
+| consumeMessageBatchMaxSize   | 1                             | 批量消费，一次消费多少条消息                                 |
+| pullBatchSize                | 32                            | 批量拉消息，一次最多拉多少条                                 |
+
+
+
+#### PullConsumer 配置
+
+| 参数名                           | 默认值                        | 说明                                                         |
+| -------------------------------- | ----------------------------- | ------------------------------------------------------------ |
+| consumerGroup                    | DEFAULT_CONSUMER              | Consumer 组名，多个 Consumer 如果属于一个应 用，订阅同样的消息，且消 费逻辑一致，则应该将它们 归为同一组 |
+| brokerSuspendMaxTimeMillis       | 20000                         | 长轮询，Consumer 拉消息请求在 Broker 挂起最长时间， 单位毫秒 |
+| consumerTimeoutMillisWhenSuspend | 30000                         | 长轮询，Consumer 拉消息请 求在 Broker 挂起超过指定时 间，客户端认为超时，单位 毫秒 |
+| consumerPullTimeoutMillis        | 10000                         | 非长轮询，拉消息超时时间， 单位毫秒                          |
+| messageModel                     | BROADCASTING                  | 消息模型，支持以下两种 1、集群消费 2、广播消费               |
+| messageQueueListener             |                               | 监听队列变化                                                 |
+| offsetStore                      |                               | 消费进度存储                                                 |
+| registerTopics                   | []                            | 注册的 topic 集合                                            |
+| allocateMessageQueueStrategy     | AllocateMessageQueueAveragely | Rebalance 算法实现策略                                       |
+
+### Message 数据结构
+
+#### 针对 Producer
+
+| 字段名         | 默认值 | 说明                                                         |
+| -------------- | ------ | ------------------------------------------------------------ |
+| Topic          | null   | 必填，线下环境不需要申请，线上环境需要申请后才能使用         |
+| Body           | null   | 必填，二进制形式，序列化由应用决定，Producer 与 Consumer 要协商好序列化形式 |
+| Tags           | null   | 选填，类似于 Gmail 为每封邮件设置的标签，方便服务器过滤使用。目前只支持每个消息设置一个 tag，所以也可以类比为 Notify 的 `MessageType` 概念 |
+| Keys           | null   | 选填，代表这条消息的业务关键词，服务器会根据 keys 创建哈希索引，设置后， 可以在 Console 系统根据 Topic、Keys 来查询消息，由于是哈希索引，请尽可能保证 key 唯一，例如订单号，商品 Id 等 |
+| Flag           | 0      | 选填，完全由应用来设置，RocketMQ 不做干预                    |
+| DelayTimeLevel | 0      | 选填，消息延时级别，0 表示不延时，大于 0 会延时特定的时间才会被消费 |
+| WaitStoreMsgOK | TRUE   | 选填，表示消息是否在服务器落盘后才返回应答                   |
+
+#### 针对 Consumer
+
+- 在 Producer 端，使用 `com.alibaba.rocketmq.common.message.Message` 这个数据结构。
+
+- 由于 **Broker 会为 Message 增加数据结构**， 所以消息到达 Consumer 后， 会在 Message 基础之上增加多个字段。
+
+-  Consumer 看到的是 `com.alibaba.rocketmq.common.message.MessageExt` 这个数据结构，MessageExt 继承于 Message。
+
+## Broker 使用指南
+
+xxx
+
+## Producer 最佳实践
+
+### 发送消息注意事项
+
+- 一个应用尽可能用一个 Topic，**消息子类型用 tags 来标识**，tags 可以由应用自由设置。只有发送消息设置了 tags，**消费方在订阅消息时，才可以利用 tags 在 broker 做消息过滤**。
+- **每个消息在业务局面的唯一标识码，要设置到 keys 字段**，方便将来定位消息丢失问题。服务器会为每个消息创建索引（哈希索引），应用可以通过 topic，key 来查询返条消息内容，以及消息被谁消费。**由于是哈希索引，请务必保证 key 尽可能唯一，这样可以避免潜在的哈希冲突**。
+
+- 消息发送成功或者失败，要打印消息日志，务必要打印 `sendresult` 和 `key` 字段。
+- **send 消息方法，只要不抛异常，就代表发送成功**。但是发送成功会有多个状态，在 sendResult 里定义。
+  - `SEND_OK` 消息发送成功。
+  - `FLUSH_DISK_TIMEOUT` 消息发送成功，但是服务器刷盘超时，消息已经进入服务器队列，只有此时服务器宕机，消息才会丢失。
+  - `FLUSH_SLAVE_TIMEOUT` 消息发送成功，但是服务器同步到 Slave 时超时，消息已经进入服务器队列，只有此时服务器宕机，消息才会丢失。
+  - `SLAVE_NOT_AVAILABLE` 消息发送成功，但是此时 slave 不可用，消息已经进入服务器队列，只有此时服务器宕机，消息才会丢失。
+- 对于精卫发送**顺序消息**的应用， 由于顺序消息的局限性， 可能会涉及到主备自动切换问题， 所以如果 sendresult 中的 status 字段不等于SEND_OK，就应该尝试重试。对于其他应用，则没有必要返样。
+- **对于消息不可丢失应用，务必要有消息重发机制。**例如如果消息发送失败，存储到数据库，能有定时程序尝试重发，或者人工触发重发。
+
+### 消息发送失败如何处理
+
+- Producer 的 send 方法本身支持内部重试。
+  - 至多重试 3 次。
+  - 如果发送失败，则轮转到下一个 Broker。
+  - 这个方法的**总耗时**时间不超过 `sendMsgTimeout` 设置的值，默认 10s。所以，**如果本身向 broker 发送消息产生超时异常，就不会再做重试**。
+- 以上策略仍然不能保证消息一定发送成功，为保证消息一定成功，**如果调用 send 同步方法发送失败，则尝试将消息存储到 db，由后台线程定时重试，保证消息一定到达 Broker**。
+- MQ内部没有做持久化重试的原因。
+  - MQ 的客户端设计为无状态模式，方便任意的水平扩展，且对机器资源的消耗仅仅是 cpu、内存、网络。
+  - 如果 MQ 客户端内部集成一个 KV 存储模块，那举数据只有同步落盘才能较可靠，而同步落盘本身性能开销较大，所以通常会采用异步落盘，又由亍应用关闭过程不受 MQ 运维人员控制，可能经常会发生 kill -9 返样 暴力方式关闭，造成数据没有及时落盘而丢失。
+  - Producer 所在机器的可靠性较低，一般为虚拟机，不适合存储重要数据。
+
+### 选择 oneway 形式发送
+
+一个 RPC 调用的过程
+
+1. 客户端发送请求到服务器。
+2. 服务器处理该请求。
+3. 服务器向客户端返回应答。
+
+
+
+一个 RPC 的耗时时间是上述三个步骤的总和，而某些场景要求耗时非常短，但是对可靠性要求并不高，例日志收集类应用，此类应用可以采用 oneway 形式调用，**oneway 形式只发送请求不等待应答**，而发送请求在客户端实现层面仅仅是一个 os 系统调用的开销，即将数据写入客户端的 socket 缓冲区，此过程耗时通常在微秒级。
+
+### 发送顺序消息注意事项
+
+略
