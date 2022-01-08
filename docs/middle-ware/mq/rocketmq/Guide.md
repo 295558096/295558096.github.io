@@ -771,7 +771,189 @@ export NAMESRV_ADDR=192.168.0.1:9876;192.168.0.2:9876
 
 ## Broker 使用指南
 
-xxx
+### Broker配置参数
+
+#### 获取Broker的默认配置
+
+```shell
+sh mqbroker -m
+```
+
+#### Broker 启动时，如何加载配置
+
+```shell
+### 第一步生成 Broker 默讣配置模版
+
+sh mqbroker -m > broker.p
+
+### 第二步修改配置文件, broker.p
+
+### 第三步加载修改过的配置文件
+
+nohup sh mqbroker -c broker.p
+```
+
+#### 动态更新地址
+
+```shell
+### 修改地址为 192.168.1.100:10911 的 Broker 消息保存时间为 24 小时
+
+sh mqadmin updateBrokerConfig -b 192.168.1.100:10911 -k fileReservedTime -v 24
+```
+
+| 字段名                            | 默认值                   | 说明                                                         |
+| --------------------------------- | ------------------------ | ------------------------------------------------------------ |
+| listenPort                        | 10911                    | Broker 对外服务的监听端口                                    |
+| namesrvAddr                       | null                     | Name Server 地址                                             |
+| brokerIP1                         | 本机 IP                  | 本机 IP 地址，默认系统自动 识别，但是某些多网卡机器会 存在识别错误的情况，这种情 况下可以人工配置 |
+| brokerName                        | 本机主机名               |                                                              |
+| brokerClusterName                 | DefaultCluster           | Broker 所属哪个集群                                          |
+| brokerId                          | 0                        | BrokerId，必须是大等于 0 的 整数，0 表示 Master，>0 表 示 Slave，一个 Master 可以挂 多个 Slave，Master 与 Slave 通过 BrokerName 来配对 |
+| autoCreateTopicEnable             | TRUE                     | 是否允许 Broker 自动创建 Topic，建议线下开启，线上 关闭      |
+| autoCreateSubscriptionGroup       | TRUE                     | 是否允许 Broker 自动创建订 阅组，建议线下开启，线上关 闭     |
+| rejectTransactionMessage          | FALSE                    | 是否拒绝事务消息接入                                         |
+| fetchNamesrvAddrByAddressServer   | FALSE                    | 是否从 web 服务器获取 Name Server 地址，针对大规模的 Broker 集群建议使用这种方式 |
+| storePathCommitLog                | $HOME/store/commitlog    | commitLog 存储路径                                           |
+| storePathConsumeQueue             | $HOME/store/consumequeue | 消费队列存储路径                                             |
+| storePathIndex                    | $HOME/store/index        | 消息索引存储路径                                             |
+| storeCheckpoint                   | $HOME/store/checkpoint   | checkpoint 文件存储路径                                      |
+| abortFile                         | $HOME/store/abort        | abort 文件存储路径                                           |
+| deleteWhen                        | 4                        | 删除文件时间点，默认凌晨 4 点                                |
+| fileReservedTime                  | 48                       | 文件保留时间，默认 48 小时                                   |
+| maxTransferBytesOnMessageInMemory | 262144                   | 单次 Pull 消息（内存）传输的最大字节数，256K                 |
+| maxTransferCountOnMessageInMemory | 32                       | 单次 Pull 消息（内存）传输的最大条数                         |
+| maxTransferBytesOnMessageInDisk   | 65536                    | 单次 Pull 消息（磁盘）传输的最大字节数，64K                  |
+| maxTransferCountOnMessageInDisk   | 8                        | 单次 Pull 消息（磁盘）传输的最大条数                         |
+| messageIndexEnable                | TRUE                     | 是否开启消息索引功能                                         |
+| messageIndexSafe                  | FALSE                    | 是否提供安全的消息索引机 制，索引保证不丢                    |
+| haMasterAddress                   |                          | 在 Slave 上直接设置 Master 地址，默认从 Name Server 上自动获取，也可以手工强制配置 |
+| brokerRole                        | ASYNC_MASTER             | Broker 的角色：<br />`ASYNC_MASTER` 异步复制、`Master- SYNC_MASTER` 同步、双写 Master- SLAVE |
+| flushDiskType                     | ASYNC_FLUSH              | 刷盘方式：<br />`ASYNC_FLUSH` 异步刷盘、 `SYNC_FLUSH` 同步刷盘 |
+| cleanFileForciblyEnable           | TRUE                     | 磁盘满、且无过期文件情况下 TRUE 表示强制删除文件，优 先保证服务可用 FALSE 标记服务不可用，文件不删除 |
+
+### Broker 集群搭建
+
+- Slave 不可写，但可读，类似于 Mysql 主备方式。
+
+#### 单个 Master
+
+- 这种方式风险较大，一旦 Broker 重启或者宕机时，会导致整个服务不可用，不建议线上环境使用。
+
+#### 多 Master 模式
+
+- 一个集群无 Slave，全是 Master。
+- `优点` 
+  - 配置简单，单个 Master 宕机或重启维护对应用无影响。
+  - 在磁盘配置为 RAID10 时，即使机器宕机不可恢复情况下，由于 RAID10 磁盘非常可靠，消息也不会丢（异步刷盘丢失少量消息，同步刷盘一条不丢）。
+  - 性能最高。
+- 缺点
+  - 单台机器宕机期间，这台机器上未被消费的消息在机器恢复之前不可订阅，消息实时性会受到影响。
+
+配置
+
+```shell
+### 先启动 Name Server，例如机器 IP 为：192.168.1.1:9876
+
+nohup sh mqnamesrv &
+
+### 在机器 A，启动第一个 Master
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-noslave/broker-a.properties &
+
+### 在机器 B，启动第二个 Master
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-noslave/broker-b.properties &
+```
+
+#### 多 Master 多Slave模式，异步复制
+
+- 每个 Master 配置一个 Slave，有多对 Master-Slave。
+- HA 采用**异步复制**方式，**主备有短暂消息延迟，毫秒级。**
+- 优点
+  - 即使磁盘损坏，消息丢失的非常少，且消息实时性不会受到影响，因为 Master 宕机后，消费者仍然可以从 Slave 消费，此过程对应用透明。
+  - 不需要人工干预。性能同多 Master 模式几乎一样。
+- 缺点
+  - Master 宕机，磁盘损坏情况，会丢失少量消息。
+
+
+
+**启动方式**
+
+```shell
+### 先启动 Name Server，例如机器 IP 为：192.168.1.1:9876
+
+nohup sh mqnamesrv &
+
+### 在机器A，启动第一个 Master
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-async/broker-a.properties &
+
+### 在机器B，启动第二个 Master
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-async/broker-b.properties &
+
+### 在机器 C，启动第一个 Slave
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-async/broker-a-s.properties &
+
+### 在机器 D，启动第二个 Slave
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-async/broker-b-s.properties &
+```
+
+
+
+#### 多 Master 多 Slave 模式，同步双写
+
+- 每个 Master 配置一个 Slave，有多对 Master-Slave。
+- **HA 采用同步双写方式，主备都写成功，向应用返回成功**。
+- 优点
+  - 数据与服务都无单点，Master 宕机情况下，消息无延迟，服务可用性与数据可用性都非常高。
+- 缺点
+  - 性能比异步复制模式略低，大约低 10%左右，发送单个消息的 RT 会略高。
+  - 目前主宕机后，备机不能自动切换为主机，后续会支持自动切换功能。
+
+
+
+配置
+
+- Broker 与 Slave 配对是通过指定相同的 brokerName 参数来配对。
+- Master 的 BrokerId 必须是 0，Slave 的 BrokerId 必须是大于 0 的数。
+-  Master 下面可以挂载多个 Slave，同一 Master 下的多个 Slave 通过指定不同的 BrokerId 来区分。
+- `$ROCKETMQ_HOST` 指的是 RocketMQ 安装目录，需要用户自己设置此环境变量。
+
+```shell
+### 先启动 Name Server，例如机器 IP 为：192.168.1.1:9876
+
+nohup sh mqnamesrv &
+
+### 在机器 A，启动第一个 Master
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-sync/broker-a.properties &
+
+### 在机器 B，启动第二个 Master
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-sync/broker-b.properties &
+
+### 在机器 C，启动第一个 Slave
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-sync/broker-a-s.properties &
+
+### 在机器 D，启动第二个 Slave
+
+nohup sh mqbroker -n 192.168.1.1:9876 -c $ROCKETMQ_HOME/conf/2m-2s-sync/broker-b-s.properties &
+```
+
+### Broker 重启对客户端的影响
+
+- Broker 重启可能会导致正在发往这台机器的的消息发送失败。
+
+- RocketMQ 提供了一种优雅关闭 Broker 的方法，通过执行命令清除 Broker 的写权限，过 40s 后，所有客户端都会更新 Broker 路由信息，此时再关闭 Broker 就不会发生发送消息失败的情况，因为所有消息都发往了其他 Broker。
+
+  ```shell
+  sh mqadmin wipeWritePerm -b brokerName -n namesrvAddr
+  ```
+
+  
 
 ## Producer 最佳实践
 
@@ -814,5 +996,78 @@ xxx
 一个 RPC 的耗时时间是上述三个步骤的总和，而某些场景要求耗时非常短，但是对可靠性要求并不高，例日志收集类应用，此类应用可以采用 oneway 形式调用，**oneway 形式只发送请求不等待应答**，而发送请求在客户端实现层面仅仅是一个 os 系统调用的开销，即将数据写入客户端的 socket 缓冲区，此过程耗时通常在微秒级。
 
 ### 发送顺序消息注意事项
+
+略
+
+## Consumer 最佳实践
+
+### 消费过程做到幂等
+
+RocketMQ 无法避免消息重复，所以如果业务对消费重复非常敏感，务必要在业务层面去重。
+
+- 将消息的唯一键，可以是 msgId，也可以是消息内容中的唯一标识字段，例如订单 Id 等，消费之前判断是否在 Db 或者 Tair(全局 KV 存储)中存在，如果不存在则插入，并消费，否则跳过。
+- 使用业务层面的状态机去重。
+
+### 消费失败处理方式
+
+略
+
+### 消费速度慢处理方式
+
+#### 提高消费并行度
+
+消息并行度与消息吞吐量关系
+
+<img src="Guide-image/image-20220107091721128.png" alt="image-20220107091721128" style="zoom:50%;" />
+
+消费并行度与消费 RT 关系
+
+<img src="Guide-image/image-20220107091743657.png" alt="image-20220107091743657" style="zoom:50%;" />
+
+- 绝大部分消息消费行为属于 IO 密集型，即可能是操作数据库，或者调用 RPC，这类消费行为的消费速度在于**后端数据库或者外系统的吞吐量**，**通过增加消费并行度，可以提高总的消费吞吐量**，但是并行度增加到一定程度，反而会下降，如图所示，呈现抛物线形式。
+- 修改消费并行度方法。
+  - **同一个 ConsumerGroup 下，通过增加 Consumer 实例数量来提高并行度，超过订阅队列数的 Consumer 实例无效**。可以通过加机器，或者在已有机器启动多个进程的方式。
+  - 提高单个 Consumer 的消费并行线程，通过修改以下参数。
+    - consumeThreadMin。
+    - consumeThreadMax。
+
+#### 批量方式消费
+
+- 某些业务流程如果支持**批量方式**消费，则可以很大程度上提高消费吞吐量。
+- 通过设置 consumer 的 `consumeMessageBatchMaxSize` 参数，默认是 1，即一次只消费一条消息，例如设置为 N，那举每次消费的消息数小于等于 N。
+
+#### 跳过非重要消息
+
+- **发生消息堆积时，如果消费速度一直追不上发送速度，可以选择丢弃不重要的消息。**
+- 当某个队列的消息数堆积到 100000 条以上，则尝试丢弃部分或全部消息，这样就可以快速追上发送消息的速度。
+
+
+
+判断堆积的代码
+
+```java
+    public ConsumeConcurrentlyStatus consumeMessage(List<MessageExt> msgs, ConsumeConcurrentlyContext context) {
+        long offset = msgs.get(0).getQueueOffset();
+        String maxOffset = msgs.get(0).getProperty(Message.PROPERTY_MAX_OFFSET);
+        long diff = Long.parseLong(maxOffset) - offset;
+        if (diff > 100000) {
+            // TODO 消息堆积情况的特殊处理
+            return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+        }
+        // TODO 正常消费过程
+        return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+    }
+```
+
+#### 优化每条消息消费过程
+
+- 优化处理流程，减少DB交互次数，提升消费速度。
+
+### 消费打印日志
+
+- 如果消息量较少，建议在消费入口方法打印消息，方便后续排查问题。
+- 如果能打印每条消息消费耗时，那么在排查消费慢等线上问题时，会更方便。
+
+### 利用服务器消息过滤，避免多余的消息传输
 
 略
