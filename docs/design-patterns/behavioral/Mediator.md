@@ -1,6 +1,6 @@
 # 中介者模式
 
->Mediator。
+> Mediator。
 
 ## 定义
 
