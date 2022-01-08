@@ -30,13 +30,5 @@
 - [备忘录模式](/design-patterns/behavioral/Memento.md)
 - [状态模式](/design-patterns/behavioral/State.md)
 - [访问者模式](/design-patterns/behavioral/Visitor.md)
-- 中介者模式
-- 解释器模式
-
-## 扩展模式
-
-- 规则模式
-- 对象池模式
-- 雇工模式
-- 黑板模式
-- 空对象模式
+- [中介者模式](/design-patterns/behavioral/Mediator.md)
+- [解释器模式](/design-patterns/behavioral/Interpreter.md)
