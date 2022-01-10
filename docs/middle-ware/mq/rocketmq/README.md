@@ -8,4 +8,4 @@
 - [广播消息示例](/middle-ware/mq/rocketmq/BroadcastMessageDemo.md)
   
 ## 📚 书籍
-- [<<RocketMQ开发指南>>](/middle-ware/mq/rocketmq/Guide.md)
+- [<< RocketMQ开发指南 >>](/middle-ware/mq/rocketmq/Guide.md)
