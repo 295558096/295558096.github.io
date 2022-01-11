@@ -624,7 +624,7 @@ ACID。
 
   如果有事务在运行，当前的方法就在这个事务内运行，否则，就启动一个新的事务，并在自己的事务内运行。
 
-- `REQUIRED NEW` 
+- `REQUIRED_NEW` 
 
   当前的方法必须启动新事务，并在它自己的事务内运行。如果有事务正在运行，应该将它起。
 
@@ -648,7 +648,75 @@ ACID。
 
   如果有事务在运行，当前的方法就应该在这个事务的嵌套事务内运行。否则，就启动一个新的事务，并在它自己的事务内运行。
 
-  
+##### 图示事务传播级别
+
+- 已经执行的`REQUIRED_NEW`一定完成。
+- 如果是`REQUIRED`，那么事务的属性都继承自大事务的。
+- `REQUIRED` 是将之前的 `Connection` 传递过来，如果之前没有，获取新的`Connection`。
+- `REQUIRED_NEW` 是直接获取新的 `Connection`。
+- 本类方法的嵌套调用，就只剩一个事务。
+
+![image-20220111213217037](image/image-20220111213217037.png)
+
+### 基于xml配置的事务
+
+- 
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:tx="http://www.springframework.org/schema/tx" xmlns:aop="http://www.springframework.org/schema/aop"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+	http://www.springframework.org/schema/beans/spring-beans.xsd
+	http://www.springframework.org/schema/tx
+	http://www.springframework.org/schema/tx/spring-tx-3.0.xsd
+    http://www.springframework.org/schema/aop 
+    http://www.springframework.org/schema/aop/spring-aop-3.0.xsd">
+
+    <!-- 配置数据源 -->
+    <bean id="dataSource" class="com.taobao.tddl.group.jdbc.TGroupDataSource" init-method="init">
+        <property name="appName" value="order"></property>
+        <property name="dbGroupKey" value="order_group"></property>
+    </bean>
+
+    <!-- 配置事务管理器 -->
+    <bean id="transactionManager"
+          class="com.tgou.springframework.extend.CustomDataSourceTransactionManager">
+        <property name="dataSource" ref="dataSource"/>
+    </bean>
+
+    <!-- 拦截器方式配置事物 -->
+    <tx:advice id="transactionAdvice" transaction-manager="transactionManager">
+        <tx:attributes>
+            <tx:method name="add*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="create*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="insert*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="batchInsert*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="save*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="upd*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="edit*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="modify*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="remove*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="delete*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="*" propagation="SUPPORTS" read-only="true"/>
+        </tx:attributes>
+    </tx:advice>
+
+    <bean id="tddlrwRounter" class="com.tiangou.tgframe.aop.TDDLRWRounter"/>
+
+    <aop:config>
+        <aop:pointcut id="transactionPointcut" expression="execution(* com.tgou.*.service.*.*(..))"/>
+        <aop:advisor pointcut-ref="transactionPointcut" advice-ref="transactionAdvice"/>
+        <aop:aspect order="-2147483648" ref="tddlrwRounter">
+            <aop:around pointcut-ref="transactionPointcut" method="determineReadOrWriteDB"/>
+        </aop:aspect>
+    </aop:config>
+</beans>
+
+```
+
+
 
 ### 编程式事务
 
@@ -721,22 +789,19 @@ try {
 - 设置事务为只读事务。
 - 加快查询速度。
 
+#### 异常分类
 
+- 运行时异常（非检査异常）
+- 可以不用处理。
+- 默认都回滚。
 
->异常分类。
->
->- 运行时异常（非检査异常）
->
-> - 可以不用处理。
-> - 默认都回滚。
->
->- 编译时异常（检查异常） 
->
-> - 必须处理，要么 try-catch，要么在方法上声明throws。
->
-> - 默认不回滚。
->
->事务的回滚：**默认发生运行时异常都回滚，发生编译时异常不会回滚**。
+- 编译时异常（检查异常） 
+
+- 必须处理，要么 try-catch，要么在方法上声明throws。
+
+- 默认不回滚。
+
+- 事务的回滚：**默认发生运行时异常都回滚，发生编译时异常不会回滚**。
 
 #### rollbackFor
 

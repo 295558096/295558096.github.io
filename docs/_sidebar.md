@@ -7,6 +7,7 @@
 * **入门**
     * [Java简介](/java/)
     * [Java基础](/java/base/)
+    * [Java Web基础](/java/web/)
 * **进阶**
     * [JVM](/jvm/)
     * [JUC](/juc/)
