@@ -13,6 +13,7 @@
 - [定时消息示例](/middle-ware/mq/rocketmq/ScheduledMessageDemo.md)
 - [批量消息示例](/middle-ware/mq/rocketmq/BatchMessageDemo.md)
 - [过滤消息示例](/middle-ware/mq/rocketmq/FilterMessageDemo.md)
+- [事务消息示例](/middle-ware/mq/rocketmq/TransactionMessageDemo.md)
 - [日志追加消息示例](/middle-ware/mq/rocketmq/LogMessageDemo.md)
   
 ## 📚 书籍
