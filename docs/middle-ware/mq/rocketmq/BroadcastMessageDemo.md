@@ -32,4 +32,35 @@ public class BroadcastProducer {
 
 ## 订阅广播消息
 
-xx
+- 订阅模式设置为广播模式。
+
+```java
+import org.apache.rocketmq.client.consumer.DefaultMQPushConsumer;
+import org.apache.rocketmq.client.consumer.listener.ConsumeConcurrentlyStatus;
+import org.apache.rocketmq.client.consumer.listener.MessageListenerConcurrently;
+import org.apache.rocketmq.common.consumer.ConsumeFromWhere;
+import org.apache.rocketmq.common.protocol.heartbeat.MessageModel;
+
+public class BroadcastConsumer {
+
+    public static void main(String[] args) throws Exception {
+
+        DefaultMQPushConsumer consumer = new DefaultMQPushConsumer("broadcastingConsumerGroup");
+        consumer.setConsumeFromWhere(ConsumeFromWhere.CONSUME_FROM_FIRST_OFFSET);
+        consumer.setNamesrvAddr("10.10.5.238:9876");
+        // 设置订阅模式为广播模式
+        consumer.setMessageModel(MessageModel.BROADCASTING);
+        // 设置订阅的主题和标签
+        consumer.subscribe("TopicTest", "TagA");
+        // 注册监听器
+        consumer.registerMessageListener((MessageListenerConcurrently) (msgs, context) -> {
+            System.out.printf(Thread.currentThread().getName() + " Receive New Messages: " + msgs + "%n");
+            return ConsumeConcurrentlyStatus.CONSUME_SUCCESS;
+        });
+        consumer.start();
+        System.out.printf("Broadcast Consumer Started.%n");
+    }
+}
+
+```
+
