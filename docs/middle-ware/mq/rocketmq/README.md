@@ -15,6 +15,9 @@
 - [过滤消息示例](/middle-ware/mq/rocketmq/FilterMessageDemo.md)
 - [事务消息示例](/middle-ware/mq/rocketmq/TransactionMessageDemo.md)
 - [日志追加消息示例](/middle-ware/mq/rocketmq/LogMessageDemo.md)
+
+## 🔑 总结
+- [核心概念](/middle-ware/mq/rocketmq/Core.md)
   
 ## 📚 书籍
 - [<< RocketMQ开发指南 >>](/middle-ware/mq/rocketmq/Guide.md)
