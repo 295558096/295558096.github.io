@@ -4,13 +4,14 @@
 * **工程复用**
     * [代码模板](/code-template/)
     * [设计文档模板](/doc-template/)
-* **入门**
+* **Java 入门**
     * [Java简介](/java/)
     * [Java基础](/java/base/)
     * [Java Web基础](/java/web/)
-* **进阶**
+* **Java 进阶**
     * [JVM](/jvm/)
     * [JUC](/juc/)
+* **进阶**
     * [云原生](/cloud/)
 * **框架**
     * [Spring全家桶](/spring/)
@@ -20,7 +21,7 @@
 * **分布式与互联网**
   * [分布式](/distributed/)
   * [互联网](/internet/)
-* **尖子生**
+* **数据存储**
     * [数据库](/db/)
     * [中间件](/middle-ware/)
 * **内功**
