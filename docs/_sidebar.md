@@ -3,6 +3,7 @@
 * [**指北**](/guide/)
 * **工程复用**
     * [代码模板](/code-template/)
+    * [解决方案](/solution/)
     * [设计文档模板](/doc-template/)
 * **Java 入门**
     * [Java 简介](/java/)
