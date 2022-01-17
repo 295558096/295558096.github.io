@@ -144,3 +144,93 @@
 - 如果不是POST请求，直接放行。
 - 如果是是POST，并且`_method`的参数值合法，将参数值转大写。
 - 包装请求为指定类型的请求重写当前请求的`getMethod()`方法，`HttpMethodRequestWrapper`，并放行。
+
+## RequestParam 注解
+
+### 简介
+
+- Spring MVC默认方式获取参数，在方法上写一个和请求参数同名的参数来接受请求参数值。
+  - 传入就封装。
+  - 不传入参数为null。
+
+- 通过`@RequestParam("xxx")`指定获取请求参数。
+- `@RequestParam("xxx")` 等同于`request.getParamter("xxx")`。
+- 默认是必须携带的参数。
+
+### 参数
+
+- `value` 指定要获取的参数的key。仅此一个属性的时候，可以省略。
+
+- `required` 指定参数是否必填，默认是true。
+- `defaultValue` 指明参数默认值。
+
+## RequestHeader 注解
+
+### 简介
+
+- 获取请求头中某个key的值。
+- `@RequestHeader("xxx")` 等同于 `request.getHeader("xxx")`。
+- 默认是必须携带的请求头。
+
+### 参数
+
+- `value` 指定要获取的请求头的key。仅此一个属性的时候，可以省略。
+
+- `required` 指定请求头是否必填，默认是true。
+- `defaultValue` 指明请求头默认值。
+
+## CookieValue 注解
+
+### 简介
+
+- 获取某个cookie的值。
+
+- `@CookieValue("xxx")` 等同于 `request.getCookies()`后循环找出指定key的cookie。
+
+### 参数
+
+- `value` 指定要获取的请求头的key。仅此一个属性的时候，可以省略。
+
+- `required` 指定请求头是否必填，默认是true。
+- `defaultValue` 指明请求头默认值。
+
+## POJO 封装参数
+
+- POJO必须有无参的构造方法。
+- 参数需要有set方法。
+- SpringMVC 会自动为POJO进行赋值，从请求中获取属性，并封装到POJO的同名属性中。
+- **支持级联封装**。
+
+## 传入原生API
+
+- 可以直接在请求方法的入参传入Servlet原生API。
+- `HttpServletRequest` 请求
+- `HttpServletResponse` 响应
+- `HttpSession` session
+- `java.security.Principal`  安全协议相关
+- `Locale` 国际化相关的区域
+- `InputStream` 输入字节流
+- `OutputStream` 输出字节流
+- `Reader` 输入字符流
+- `Writer` 输出字符流
+
+## 乱码的解决
+
+### 请求乱码
+
+#### GET请求
+
+- 修改`server.xml`，添加配置`<Connector URIEncoding="UTF-8"/>`。
+
+#### POST请求
+
+- 在第一次获取请求参数之前设置`request.setCharacterEncoding("utf-8");`。
+- 编写一个Filter，确保获取参数之前，设置`CharacterEncoding`。
+- 配置SpringMVC提供的 `CharacterEncodingFilter` 也可以指定编码。
+  - 配置Filter的initParam的`encoding`设置入参的编码集。
+  - 配置Filter的initParam的`forceEncoding`设置是否强制转换响应编码。
+- **字符编码Filter一般都在其他Filter之前，否则可能失效。**
+
+### 响应乱码
+
+- `response.setContextType("text/html;charset=UTF-8");`。
