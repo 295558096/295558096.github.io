@@ -23,9 +23,9 @@
 ### Spring全家桶
 
 - Spring
-- SpringMVC
-- SpringBoot
-- SpringCloud
+- Spring MVC
+- Spring Boot
+- Spring Cloud
 
 ### 主流框架
 
