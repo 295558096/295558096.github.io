@@ -9,3 +9,6 @@
 
 ## 缓存中间件
 - [Redis](/middle-ware/cache/redis/) &nbsp;&nbsp;&nbsp;&nbsp;`高并发基石`
+
+## 数据同步中间件
+- [Canal](/middle-ware/canal/) &nbsp;&nbsp;&nbsp;&nbsp;`MySQL数据同步`
