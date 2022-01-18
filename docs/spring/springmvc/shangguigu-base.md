@@ -234,3 +234,66 @@
 ### 响应乱码
 
 - `response.setContextType("text/html;charset=UTF-8");`。
+
+## 数据输出
+
+### 原生 request
+
+略
+
+### 原生 session
+
+略
+
+### Map、Model、ModelMap
+
+- 在方法入参传入`Map`、`Model` 或者 `ModelMap`这些参数里面保存的所有数据都会放在**请求域**中。
+- SpringMVC中Map、Model、ModelMap的类型都是`BindingAwareModelMap`。
+- 保存在`BindingAwareModelMap`中的数据最终都会被带到请求域中。
+
+#### Map
+
+- JDK的接口。
+
+#### Model
+
+- Spring 定义的接口。
+
+#### ModelMap
+
+- 类。
+- 继承自`LinkedHashMap`。
+
+#### BindingAwareModelMap
+
+- 继承自`ExtendedModelMap`。
+- `ExtendedModelMap` 继承自 `ModelMap` 并且实现`Model`接口。
+
+### ModelAndView
+
+- 既包含视图信息，也包含模型信息。
+- 向request域中带数据。
+
+- 方法的返回值可以变为 `ModelAndView` 类型。
+
+- `viewName`视图名，指向想要跳转的页面。
+- `addObject()`方法，保存对象。
+
+### SessionAttributes 注解
+
+- 向Session域中携带数据。
+- 是一个标记在类上的注解。
+- 当给`BindingAwareModelMap` 中保存的数据的时候，同时给 `session` 中放一份。
+- 不建议使用`@SessionAttributes`，可能会产生异常。
+- 建议使用原生API。
+
+#### 参数
+
+- `value` 指明要同步保存数据的key。
+- `types` 指明要同步保存数据的类型。
+
+### ModelAttribute 注解
+
+- 方法入参标注该注解后，入参的对象就会放到数据模型中。
+- **标记在方法上，该方法就会提前与目标方法先运行，可以进行校验或者数据获取**，将查询结果存入到`Model`、`Map` 或者 `ModelMap` 中。
+- 标记在参数上，取出保存在 `Model`、`Map` 或者 `ModelMap` 中保存的同名对象。
