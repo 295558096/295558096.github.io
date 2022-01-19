@@ -268,6 +268,7 @@
 
 - 继承自`ExtendedModelMap`。
 - `ExtendedModelMap` 继承自 `ModelMap` 并且实现`Model`接口。
+- **BindingAwareModelMap 是 SpringMVC 保存在请求域中的共享容器对象。**
 
 ### ModelAndView
 
@@ -297,3 +298,15 @@
 - 方法入参标注该注解后，入参的对象就会放到数据模型中。
 - **标记在方法上，该方法就会提前与目标方法先运行，可以进行校验或者数据获取**，将查询结果存入到`Model`、`Map` 或者 `ModelMap` 中。
 - 标记在参数上，取出保存在 `Model`、`Map` 或者 `ModelMap` 中保存的同名对象。
+
+## SpringMVC 源码
+
+### DispatcherServlet
+
+#### 请求流程
+
+1. xx
+
+#### 请求流程图
+
+![image-20220119211002836](image/image-20220119211002836.png)
