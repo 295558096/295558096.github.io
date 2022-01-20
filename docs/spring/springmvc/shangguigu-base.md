@@ -305,7 +305,18 @@
 
 #### 请求流程
 
-1. xx
+1. 请求来到`org.springframework.web.servlet.DispatcherServlet#doDispatch`方法。
+1. 检查请求是否属于文件上传请求，是的话，包装原请求。
+3. 根据请求找到目标处理器，`HandlerAdapter ha = getHandlerAdapter(mappedHandler.getHandler());`。
+   - `HandlerAdapter` 中包含了**拦截器链**和**目标控制器**，在IOC容器启动的时候，初始化的这些`Controller`信息。
+   - `handlerMappings`中对象的`handlerMapping`集合中保存了所有的**请求地址和对应处理器的信息**。
+   - 根据请求的地址，来匹配出对应的处理器。
+   - 返回的对象类型是 `HandlerExecutionChain`。
+
+4. 找不到处理就抛404异常。
+5. 拿到能执行这个类的所有方法的适配器。
+6. `mv = ha.handle(processedRequest, response, mappedHandler.getHandler());`调用适配器处理当前请求，得到`ModelAndView`对象。
+7. 调用`processDispatchResult(processedRequest, response, mappedHandler, mv, dispatchException);`方法处理请求结果，转发到目标页面。
 
 #### 请求流程图
 
