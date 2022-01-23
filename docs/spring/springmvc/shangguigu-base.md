@@ -315,9 +315,87 @@
 
 4. 找不到处理就抛404异常。
 5. 拿到能执行这个类的所有方法的适配器。
+   - `HttpRequestHandlerAdapter`、`SimpleControllerHandlerAdapter`、`AnnotationMethodHandlerAdapter`。
+   - `AnnotationMethodHandlerAdapter` 解析注解方法的适配器。
+   - 遍历`handlerAdapters`，通过support方法判断是否适配。
+
 6. `mv = ha.handle(processedRequest, response, mappedHandler.getHandler());`调用适配器处理当前请求，得到`ModelAndView`对象。
 7. 调用`processDispatchResult(processedRequest, response, mappedHandler, mv, dispatchException);`方法处理请求结果，转发到目标页面。
 
 #### 请求流程图
 
 ![image-20220119211002836](image/image-20220119211002836.png)
+
+### SpringMVC 九大组件
+
+- `DispatcherServlet` 中有九大引用对象，在IOC容器启动阶段被注入，被我们称为九大组件。
+
+- SpringMVC 在工作的时候，关键位置的业务都是由这些组件完成的。
+
+- 九大组件都是**接口**，定义了规范，支持进行扩展。
+
+- 可以在 `web.xml` 中修改 `DispatcherServlet` 某些属性的默认配置。
+
+- **九大组件的初始化都是去容器中找对应的组件实现，如果没有找到，就使用SpringMVC提供的默认组件策略**。
+
+- 有的组件是通过类型找到的，有的是通过ID找到的。
+
+- `DispatcherServlet#onRefresh` 实现了父类的方法，在IOC容器启动的时候被调用，完成组件的注册。
+
+  ```java
+  @Override
+  protected void onRefresh(ApplicationContext context) {
+    initStrategies(context);
+  }	
+  
+  protected void initStrategies(ApplicationContext context) {
+    initMultipartResolver(context);
+    initLocaleResolver(context);
+    initThemeResolver(context);
+    initHandlerMappings(context);
+    initHandlerAdapters(context);
+    initHandlerExceptionResolvers(context);
+    initRequestToViewNameTranslator(context);
+    initViewResolvers(context);
+    initFlashMapManager(context);
+  }
+  ```
+
+#### MultipartResolver
+
+- 文件上传解析器。
+
+#### LocaleResolver
+
+- 区域信息、国际化解析器。
+
+#### ThemeResolver
+
+- 主题解析器。
+- 支持主题更换功能。
+
+#### HandlerMapping
+
+- 存储 Handler 的映射信息。
+
+#### HandlerAdapter
+
+- Handler 的适配器。
+
+#### HandlerExceptionResolver
+
+- 异常解析器。
+- SpringMVC 支持强大的异常解析功能。
+
+#### RequestToViewNameTranslator
+
+- 请求到视图名的转换器。
+
+#### FlashMapManager
+
+- SpringMVC 中允许重定向携带数据的管理器。
+
+#### ViewResolver
+
+- 视图解析器。
+- `InternalResourceViewResolver`。
