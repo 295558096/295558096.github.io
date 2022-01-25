@@ -298,6 +298,7 @@
 - 方法入参标注该注解后，入参的对象就会放到数据模型中。
 - **标记在方法上，该方法就会提前与目标方法先运行，可以进行校验或者数据获取**，将查询结果存入到`Model`、`Map` 或者 `ModelMap` 中。
 - 标记在参数上，取出保存在 `Model`、`Map` 或者 `ModelMap` 中保存的同名对象。
+- `ModelAttribute` 注解如果标记在方法上那么可以**把方法运行后的返回值按照方法上指定的 key 放到隐含模型中。如果没有指定这个 key，就用返回值类型的首字母小写**。
 
 ## SpringMVC 源码
 
@@ -306,7 +307,7 @@
 #### 请求流程
 
 1. 请求来到`org.springframework.web.servlet.DispatcherServlet#doDispatch`方法。
-1. 检查请求是否属于文件上传请求，是的话，包装原请求。
+2. 检查请求是否属于文件上传请求，是的话，包装原请求。
 3. 根据请求找到目标处理器，`HandlerAdapter ha = getHandlerAdapter(mappedHandler.getHandler());`。
    - `HandlerAdapter` 中包含了**拦截器链**和**目标控制器**，在IOC容器启动的时候，初始化的这些`Controller`信息。
    - `handlerMappings`中对象的`handlerMapping`集合中保存了所有的**请求地址和对应处理器的信息**。
@@ -320,6 +321,27 @@
    - 遍历`handlerAdapters`，通过support方法判断是否适配。
 
 6. `mv = ha.handle(processedRequest, response, mappedHandler.getHandler());`调用适配器处理当前请求，得到`ModelAndView`对象。
+   - 根据反射调用目标方法。
+   - 方法解析器根据当前请求地址找到真正的目标方法。
+   - 创建一个方法执行器，包装原生的`Request`、`Response`。
+   - 构建一个`BindingAwareModelMap`。
+   - 触发方法执行器的 `invokeHandlerMethod` 完成目标方法的调用，目标方法利用反射执行期间确定参数值。
+   - `resolveHandlerArguments()`用来确定方法的参数。
+     - 定义一个和`method.getParaterTypes()`结果等长的数组。
+     - 遍历入参从中为每个位置的参数设置值。
+     - 首先获取方法参数上标记的**注解**情况并分析注解。
+       - 如果注解是 `SpringMVC` 注解则获取参数名称、默认值、是否必填的信息。
+       - 根据参数的key调用`String[] paramValues = request.getParamterValues(paramName);` 获取全部该参数名称的参数值。
+     - 如果没有**标记注解**，按照普通参数解析。
+       - 分析参数类型是否是原生API，如果是，直接将原生 API 赋值给当前参数。
+       - 如果不是，就根据参数名直接获取对应的参数值。
+       - 如果参数类型是 `Map` 或者 `Model`，会把**隐含模型**传入。
+     - 如果参数是自定义类型时，标记了@ModelAttribute注解，那么attrName等于注解的value，否则为空。按照如下顺序取值：
+       - 如果隐含模型中有这个 `attrName`，就从隐含模型中获取对应的值。**如果 `attrName` 为空，从隐含模式中获取参数类名小写的 key 对应的值。**
+       - 如果满足 `@SessionAttribute` 的规则，满足则从`SessionAttribute`中取值。
+       - 如果匹配不到，创建一个空对象。
+   - 先通过反射调用@ModelAttribute标记的方法，再通过反射调用的真正的目标方法。
+   
 7. 调用`processDispatchResult(processedRequest, response, mappedHandler, mv, dispatchException);`方法处理请求结果，转发到目标页面。
 
 #### 请求流程图
