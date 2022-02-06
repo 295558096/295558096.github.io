@@ -297,8 +297,85 @@
 
 - 方法入参标注该注解后，入参的对象就会放到数据模型中。
 - **标记在方法上，该方法就会提前与目标方法先运行，可以进行校验或者数据获取**，将查询结果存入到`Model`、`Map` 或者 `ModelMap` 中。
-- 标记在参数上，取出保存在 `Model`、`Map` 或者 `ModelMap` 中保存的同名对象。
-- `ModelAttribute` 注解如果标记在方法上那么可以**把方法运行后的返回值按照方法上指定的 key 放到隐含模型中。如果没有指定这个 key，就用返回值类型的首字母小写**。
+- **标记在参数上**，取出保存在 `Model`、`Map` 或者 `ModelMap` 中保存的同名对象。
+- `ModelAttribute` 注解如果**标记在方法上**那么可以**把方法运行后的返回值按照方法上指定的 key 放到隐含模型中。如果没有指定这个 key，就用返回值类型的首字母小写**。
+
+## 视图解析
+
+### 跳转方式
+
+1. 通过视图解析器，`return "xx";` 跳转带拼接后的 `xx`路径下。
+2. 通过相对路径，在返回值中拼上相对路径。
+3. **转发 **`forward:路径`，转发到指定路径。客户端感知不到，认定是一次请求。
+4. **重定向** `redirect:` 重定向的路径。
+   - SpringMvc会自动拼接项目路径。
+   - 如果通过Servlet原生的重定向，路径需要加上项目名才能成功。
+   - 重定向浏览器会认定为多次请求。
+
+5. 重定向和转发与配置的视图解析器没有关系。
+
+## 国际化
+
+### JavaWeb 国际化
+
+- 得到一个 `Locale` 对象。
+- 使用 `ResourceBundles` 绑定国际化资源文件。
+- 使用 `ResourceBundle.getString("key");` 获取到国际化配置文件中的值。
+- Web 页面的国际化，通过使用 **fmt 标签库**。
+  - \<fmt:setLocale>
+  - \<fmt:setBundle>
+  - \<fmt:setmessage>
+
+### SpringMvc 基于 JstlView 国际化
+
+- 让 Spring 管理国际化资源，`ResourceBundleMessageSource`，bean 的 id 必须是 `messageSource`。
+- 直接去页面使用即可。
+- 直接访问资源文件或者是 `forward` 转发请求，国际化不会生效。
+
+## ViewController 视图控制器
+
+- 用来直接配置并指定跳转到视图的方法。
+- 需要启用SpringMVC注解驱动的配置，否则其他的请求会报错。
+
+```xml
+<mvc:view-controller path="/xxx" view-name="xxx"/>
+
+<mvc:annotation-driven></mvc:annotation-driven>
+```
+
+## 自定义视图和自定义视图解析器
+
+- 编写自定义的视图解析器，实现 `ViewResolver` 接口和 `Ordered`接口。
+  - 实现 `resolveViewName` 方法，返回指定的视图对象。
+  - 实现 `order` 方法，用于指定视图解析器的优先级，**数字越小，优先级越高**。
+- 编写自定义视图，实现 View 接口。
+  - 实现 `render` 方法，设置响应的`ContentType`。
+  - 可以获取到 `Model` 隐藏模型中的数据。
+- 在 SpringMVC 配置文件中配置自定义视图解析器，放到 Ioc 容器中，指定自定义视图解析器的顺序。
+
+## SpringMVC Restful
+
+- 需要通过配置 `HttpHiddenMethodFilter` 来启用SpringMVC 对Restful 请求的支持。
+
+- restful 请求规则 `请求类型 /资源名/资源标识`。
+
+- 配置默认的处理请求Servlet。如果dispatcherServlet处理不了的请求，会转交给 Tomcat 默认的Servlet去处理。
+
+  ```xml
+  <!-- 启动默认处理器去处理静态资源-->
+  <mvc:default-servlet-handler/>
+  <!-- 解决启用默认处理器后，只有静态资源可以访问的问题-->
+  <mvc:annotation-driven></mvc:annotation-driven>
+  ```
+
+  
+
+### 表单标签
+
+- 通过 SpringMVC 的表单标签前以实现**模型数据中的属性和 HTML 表单元素相绑定**，以实现表单数据更便捷编辑和表单值的回显。
+- 表单标签库的地址 `http://www.springframework.org/tags/form`。
+
+------
 
 ## SpringMVC 源码
 
@@ -421,3 +498,250 @@
 
 - 视图解析器。
 - `InternalResourceViewResolver`。
+
+
+
+### 视图解析器原理
+
+- 方法执行后的**返回值**会作为页面地址参考，转发或者重定向到页面。
+- 视图解析器可能会进行页面地址的拼串。
+
+- 任何方法的返回值最终都会被包装成`ModelAndView`对象。
+- `org.springframework.web.servlet.DispatcherServlet#processDispatchResult`方法会处理ModelAndView对象，并最终渲染页面。
+
+<img src="image/%E6%9C%AA%E5%91%BD%E5%90%8D%E6%96%87%E4%BB%B6%20(1).png" alt="未命名文件 (1)" style="zoom:50%;" />
+
+#### 视图渲染流程
+
+- `org.springframework.web.servlet.DispatcherServlet#render`真正进行页面渲染的方法。
+
+  ```java
+  protected void render(ModelAndView mv, HttpServletRequest request, HttpServletResponse response) throws Exception {
+  		// Determine locale for request and apply it to the response.
+  		Locale locale =
+  				(this.localeResolver != null ? this.localeResolver.resolveLocale(request) : request.getLocale());
+  		response.setLocale(locale);
+  
+  		View view;
+  		String viewName = mv.getViewName();
+  		if (viewName != null) {
+  			// We need to resolve the view name.
+  			view = resolveViewName(viewName, mv.getModelInternal(), locale, request);
+  			if (view == null) {
+  				throw new ServletException("Could not resolve view with name '" + mv.getViewName() +
+  						"' in servlet with name '" + getServletName() + "'");
+  			}
+  		}
+  		else {
+  			// No need to lookup: the ModelAndView object contains the actual View object.
+  			view = mv.getView();
+  			if (view == null) {
+  				throw new ServletException("ModelAndView [" + mv + "] neither contains a view name nor a " +
+  						"View object in servlet with name '" + getServletName() + "'");
+  			}
+  		}
+  
+  		// Delegate to the View object for rendering.
+  		if (logger.isTraceEnabled()) {
+  			logger.trace("Rendering view [" + view + "] ");
+  		}
+  		try {
+  			if (mv.getStatus() != null) {
+  				response.setStatus(mv.getStatus().value());
+  			}
+        // 调用View对象的render方法进行视图渲染。
+  			view.render(mv.getModelInternal(), request, response);
+  		}
+  		catch (Exception ex) {
+  			if (logger.isDebugEnabled()) {
+  				logger.debug("Error rendering view [" + view + "]", ex);
+  			}
+  			throw ex;
+  		}
+  	}
+
+- `org.springframework.web.servlet.view.AbstractView#render` render方法的抽象实现。
+
+  ```java
+  	@Override
+  	public void render(@Nullable Map<String, ?> model, HttpServletRequest request,
+  			HttpServletResponse response) throws Exception {
+  
+  		if (logger.isDebugEnabled()) {
+  			logger.debug("View " + formatViewName() +
+  					", model " + (model != null ? model : Collections.emptyMap()) +
+  					(this.staticAttributes.isEmpty() ? "" : ", static attributes " + this.staticAttributes));
+  		}
+  
+  		Map<String, Object> mergedModel = createMergedOutputModel(model, request, response);
+  		prepareResponse(request, response);
+      // 渲染
+  		renderMergedOutputModel(mergedModel, getRequestToExpose(request), response);
+  	}
+  ```
+
+- `InternalResourceView#renderMergedOutputModel`视图解析器根据合并后的输出模型渲染参数的方法。
+
+  ```java
+  @Override
+  	protected void renderMergedOutputModel(
+  			Map<String, Object> model, HttpServletRequest request, HttpServletResponse response) throws Exception {
+  
+  		// 暴露属性到请求域中。
+  		exposeModelAsRequestAttributes(model, request);
+  
+  		// Expose helpers as request attributes, if any.
+  		exposeHelpers(request);
+  
+  		// 获取转发路径
+  		String dispatcherPath = prepareForRendering(request, response);
+  
+  		// 获取转发器
+  		RequestDispatcher rd = getRequestDispatcher(request, dispatcherPath);
+  		if (rd == null) {
+  			throw new ServletException("Could not get RequestDispatcher for [" + getUrl() +
+  					"]: Check that the corresponding file exists within your web application archive!");
+  		}
+  
+  		// If already included or response already committed, perform include, else forward.
+  		if (useInclude(request, response)) {
+  			response.setContentType(getContentType());
+  			if (logger.isDebugEnabled()) {
+  				logger.debug("Including [" + getUrl() + "]");
+  			}
+  			rd.include(request, response);
+  		}
+  
+  		else {
+  			// Note: The forwarded resource is supposed to determine the content type itself.
+  			if (logger.isDebugEnabled()) {
+  				logger.debug("Forwarding to [" + getUrl() + "]");
+  			}
+        // 进行页面转发
+  			rd.forward(request, response);
+  		}
+  	}
+  ```
+
+  
+
+#### View 与 ViewResolver
+
+- `org.springframework.web.servlet.ViewResolver#resolveViewName`，视图解析器通过解析视图名返回 **View** 对象。
+
+  ```java
+  	@Override
+  	@Nullable
+  	public View resolveViewName(String viewName, Locale locale) throws Exception {
+  		if (!isCache()) {
+  			return createView(viewName, locale);
+  		}
+  		else {
+  			Object cacheKey = getCacheKey(viewName, locale);
+  			View view = this.viewAccessCache.get(cacheKey);
+  			if (view == null) {
+  				synchronized (this.viewCreationCache) {
+  					view = this.viewCreationCache.get(cacheKey);
+  					if (view == null) {
+  						// 没有缓存的情况下，创建View对象。
+  						view = createView(viewName, locale);
+  						if (view == null && this.cacheUnresolved) {
+  							view = UNRESOLVED_VIEW;
+  						}
+  						if (view != null && this.cacheFilter.filter(view, viewName, locale)) {
+  							this.viewAccessCache.put(cacheKey, view);
+  							this.viewCreationCache.put(cacheKey, view);
+  						}
+  					}
+  				}
+  			}
+  			else {
+  				if (logger.isTraceEnabled()) {
+  					logger.trace(formatKey(cacheKey) + "served from cache");
+  				}
+  			}
+  			return (view != UNRESOLVED_VIEW ? view : null);
+  		}
+  	}
+  ```
+
+- `UrlBasedViewResolver#createView`创建 View 对象。
+
+  ```java
+  @Override
+  	protected View createView(String viewName, Locale locale) throws Exception {
+  		// If this resolver is not supposed to handle the given view,
+  		// return null to pass on to the next resolver in the chain.
+  		if (!canHandle(viewName, locale)) {
+  			return null;
+  		}
+  
+  		// 重定向的返回值，创建一个重定向的View对象。
+  		if (viewName.startsWith(REDIRECT_URL_PREFIX)) {
+  			String redirectUrl = viewName.substring(REDIRECT_URL_PREFIX.length());
+  			RedirectView view = new RedirectView(redirectUrl,
+  					isRedirectContextRelative(), isRedirectHttp10Compatible());
+  			String[] hosts = getRedirectHosts();
+  			if (hosts != null) {
+  				view.setHosts(hosts);
+  			}
+  			return applyLifecycleMethods(REDIRECT_URL_PREFIX, view);
+  		}
+  
+  		// 转发请求的返回值，创建一个转发的View对象。
+  		if (viewName.startsWith(FORWARD_URL_PREFIX)) {
+  			String forwardUrl = viewName.substring(FORWARD_URL_PREFIX.length());
+  			InternalResourceView view = new InternalResourceView(forwardUrl);
+  			return applyLifecycleMethods(FORWARD_URL_PREFIX, view);
+  		}
+  
+  		// 调用父类的loadView，创建并加载View对象。
+  		return super.createView(viewName, locale);
+  	}
+  ```
+
+#### 视图渲染及视图的总结
+
+- 请求处理方法执行完成后，最终返回一个 `ModelAndView` 对象。对于那些返回 `String`、`View` 或 `ModelMap` 等类型的处理方法，SpringMVC 也会在内部将它们装配成一个 `ModelAndView` 对象，它包含了**逻辑名**和**模型对象**的视图。
+- SpringMVC 借助视图解析器`ViewResolver`得到最终的视图对象`View`，最终的视图可以是 `JSP`，也可能是 `Excel`、`Jfree Chart` 等各种表现形式的视图。
+- 对于最终究竟采取何种视图对象对模型数据进行渲染，处理器并不关心，处理器工作重点聚焦在生产模型数据的工作上，从而实现 MVC 的充分解耦。
+- 视图的作用是渲染模型数据，将模型里的数据以棊种形式呈现给客户。
+- 为了实现视图模型和具体实现技术的解耦，Spring 在 `org.springframework.web.servlet` 包中定义了一个高度抽象的 `View` 接口。
+- **视图对象由视图解析器负责实例化**。由于视图是**无状态**的，所以他们不会有线程安全的问题。
+- SpringMVC 为**逻辑视图名的解析提供了不同的策略**，可以在 Spring WEB 上下文中**配置一种或多种解析策略，并指定他们之间的先后顺序**。**每一种映射策略对应一个具体的视图解析器实现类**。
+- **视图解析器的作用比较单一，将逻辑视图解析为一个具体的视图对象**。
+- 所有的视图解析器都必须实现 `ViewResoler` 接口。
+
+#### 常用视图实现类
+
+| 类型        | 视图类型                      | 说明                                                         |
+| ----------- | ----------------------------- | ------------------------------------------------------------ |
+| URL资源视图 | **IntemalResourceView**       | 将 JSP 或其它资源封装成一个视图，是InternalResourceViewResolver。默认使用的视图实现类。 |
+| URL资源视图 | **JstlView**                  | 如果 JSP 文件中使用了 JSTL 国际化标签的功能，则要使用该视图类。 |
+| 文档视图    | AbstractExcelView             | Excel 文档视图的抽象类。该视图类基于 POI 构造 Excel 文档。   |
+| 文档视图    | AbstractPdfView               | PDF 文档视图的抽象类。该视图类基于 iText 构造 PDF 文档。     |
+| 报表视图    | ConfigurableJsperReports View | 使用 JasperReports 报表技术的视图。                          |
+| 报表视图    | JasperReportsCsvView          | 使用 JasperReports 报表技术的视图。                          |
+| 报表视图    | JasperReportsMultiFormat View | 使用 JasperReports 报表技术的视图。                          |
+| 报表视图    | JasperReportsHtmlView         | 使用 JasperReports 报表技术的视图。                          |
+| 报表视图    | JasperReportsPdfView          | 使用 JasperReports 报表技术的视图。                          |
+| 报表视图    | JasperReportsXlsView          | 使用 JasperReports 报表技术的视图。                          |
+| JSON视图    | MappingJacksonJsonView        | 将模型数据通过 `Jackson` 开源框架的 `ObjectMapper` 以 JSON 方式输出。 |
+
+#### 常用的视图解析器实现类
+
+- 程序员可以选择一种视图解析器或混用多种视图解析器。
+- 每个视图解析器都实现了 `Ordered` 接口并开放出一个 order 属性，可**以通过 order 属性指定解析器的优先顺序，order 越小优先级越高**。
+- SpringMVC 会按视图解析器顺序的优先顺序对逻辑视图名进行解析，直到解析成功并返回视图对象，否则将抛出 `ServletException` 异常。
+
+
+
+| 类型               | 视图类型                         | 说明                                                         |
+| ------------------ | -------------------------------- | ------------------------------------------------------------ |
+| 解析为 Bean 的名字 | **BeanNameViewResolver**         | 将逻辑视图名解析为一个 Bean， Bean 的 id 等于逻辑视图名。    |
+| 解析为 URL 文件    | **InternalResourceViewResolver** | 将视图名解析为个 URL 文件，一般使用该解析器将视图名映射为一个保存在 **WEB-INF** 目录下的程序文件（如 JSP)。 |
+| 解析为 URL 文件    | JasperReportsViewResolver        | JasperReports 是一个基于 Java 的开源报表工具，该解析器将视图名解析为报表文件对应的 URL。 |
+| 模版文件视图       | FreeMarkerViewResolver           | 解析为基于 FreeMarker 模版技术的模版文件。                   |
+| 模版文件视图       | VelocityViewResolver             | 解析为基于 Velocity 模版技术的模版文件。                     |
+| 模版文件视图       | VelocityLayoutViewResolver       | 解析为基于 Velocity 模版技术的模版文件。                     |
+
