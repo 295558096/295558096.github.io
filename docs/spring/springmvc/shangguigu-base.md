@@ -368,14 +368,210 @@
   <mvc:annotation-driven></mvc:annotation-driven>
   ```
 
-  
-
 ### 表单标签
 
 - 通过 SpringMVC 的表单标签前以实现**模型数据中的属性和 HTML 表单元素相绑定**，以实现表单数据更便捷编辑和表单值的回显。
 - 表单标签库的地址 `http://www.springframework.org/tags/form`。
 
+## 自定义类型转换器
+
+Spring 定义了 3 种类型的转换器接口，**实现任意一个转换器接口都可以作为自定义转换器注册到  ConversionServiceFactoryBean**。
+
+- `Converter <S, T>` 将 S 类型对象转为 T 类型对象。
+- `ConverterFactory` 将相同系列多个“同质”Converter 封装在一起。如果希望将一种类型的对象转换为另一种类型及其子类的对象，可使用该转换器工厂。
+- `GenericConverter` 根据源类对象及目标类对象所在的宿主类中的上下文信息进行类型转换。
+
+### 实现过程
+
+- 实现`Converter`接口，实现`convert`方法完成从S到T类的转换逻辑。
+
+- 注册自定义 `Converter` 到 `ConversionService` 中，在`SpringMVC` 中 `ConversionService` 是从`ConversionServiceFactoryBean`获取的。
+
+  ```xml
+  <bean id="conversionService" class="org.springframework.context.support.ConversionServiceFactoryBean">
+    <property name="converters">
+      <set>
+        <bean name="xxxx">
+      </set>
+    </property>
+  </bean>
+  ```
+
+- 在SpringMVC中启用自定义的`ConversionService`，默认的转换器，SpringMVC会自己注入进去。
+
+  ```xml
+  <mvc:annotation-driven conversion-service="conversionService"></mvc:annotation-driven>
+  ```
+
+  
+
 ------
+
+## mvc:annotation-driven
+
+- `<mvc:annotation-driven/>` 会自动注册 `RequestMappingHandlerMapping`、`RequestMappingHandlerAdapter`与`ExcepctionHandlerExceptionResolver` 三个Bean。
+- `<mvc:annotation-driven/>`还会提供以下高级功能的支持。
+  - 支持使用 `ConversionService` 实例对表单参数进行类型转换。
+  - 支持使用`@NumberFormatAnnotation`、`@DateTimeFormat` 注解完成数据类型的格式化。
+  - 支持使用`@Valid` 注解对 Javabean 实例进行 JSR303 验证。
+  - 支持使用`@RequestBody` 和 `@ResponseBody` 注解。
+- 可以解决动态、静态资源不好用的问题。
+
+### AnnotationDrivenBeanDefinitionParser
+
+- `org.springframework.web.servlet.config.AnnotationDrivenBeanDefinitionParser` 解析 `<mvc:annotation-driven/>`标签。
+
+- 想容器中注册了部分组件、添加了部分新功能。
+
+  ```java
+  	@Override
+  	@Nullable
+  	public BeanDefinition parse(Element element, ParserContext context) {
+  		Object source = context.extractSource(element);
+  		XmlReaderContext readerContext = context.getReaderContext();
+  
+  		CompositeComponentDefinition compDefinition = new CompositeComponentDefinition(element.getTagName(), source);
+  		context.pushContainingComponent(compDefinition);
+  
+  		RuntimeBeanReference contentNegotiationManager = getContentNegotiationManager(element, source, context);
+  
+  		RootBeanDefinition handlerMappingDef = new RootBeanDefinition(RequestMappingHandlerMapping.class);
+  		handlerMappingDef.setSource(source);
+  		handlerMappingDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+  		handlerMappingDef.getPropertyValues().add("order", 0);
+  		handlerMappingDef.getPropertyValues().add("contentNegotiationManager", contentNegotiationManager);
+  
+  		if (element.hasAttribute("enable-matrix-variables")) {
+  			Boolean enableMatrixVariables = Boolean.valueOf(element.getAttribute("enable-matrix-variables"));
+  			handlerMappingDef.getPropertyValues().add("removeSemicolonContent", !enableMatrixVariables);
+  		}
+  
+  		configurePathMatchingProperties(handlerMappingDef, element, context);
+  		readerContext.getRegistry().registerBeanDefinition(HANDLER_MAPPING_BEAN_NAME, handlerMappingDef);
+  
+  		RuntimeBeanReference corsRef = MvcNamespaceUtils.registerCorsConfigurations(null, context, source);
+  		handlerMappingDef.getPropertyValues().add("corsConfigurations", corsRef);
+  
+  		RuntimeBeanReference conversionService = getConversionService(element, source, context);
+  		RuntimeBeanReference validator = getValidator(element, source, context);
+  		RuntimeBeanReference messageCodesResolver = getMessageCodesResolver(element);
+  
+  		RootBeanDefinition bindingDef = new RootBeanDefinition(ConfigurableWebBindingInitializer.class);
+  		bindingDef.setSource(source);
+  		bindingDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+     	// 添加转换服务
+  		bindingDef.getPropertyValues().add("conversionService", conversionService);
+      // 添加验证器
+  		bindingDef.getPropertyValues().add("validator", validator);
+      // 添加消息解释器
+  		bindingDef.getPropertyValues().add("messageCodesResolver", messageCodesResolver);
+  
+  		ManagedList<?> messageConverters = getMessageConverters(element, source, context);
+  		ManagedList<?> argumentResolvers = getArgumentResolvers(element, context);
+  		ManagedList<?> returnValueHandlers = getReturnValueHandlers(element, context);
+  		String asyncTimeout = getAsyncTimeout(element);
+  		RuntimeBeanReference asyncExecutor = getAsyncExecutor(element);
+  		ManagedList<?> callableInterceptors = getInterceptors(element, source, context, "callable-interceptors");
+  		ManagedList<?> deferredResultInterceptors = getInterceptors(element, source, context, "deferred-result-interceptors");
+  
+  		RootBeanDefinition handlerAdapterDef = new RootBeanDefinition(RequestMappingHandlerAdapter.class);
+  		handlerAdapterDef.setSource(source);
+  		handlerAdapterDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+  		handlerAdapterDef.getPropertyValues().add("contentNegotiationManager", contentNegotiationManager);
+  		handlerAdapterDef.getPropertyValues().add("webBindingInitializer", bindingDef);
+  		handlerAdapterDef.getPropertyValues().add("messageConverters", messageConverters);
+  		addRequestBodyAdvice(handlerAdapterDef);
+  		addResponseBodyAdvice(handlerAdapterDef);
+  
+  		if (element.hasAttribute("ignore-default-model-on-redirect")) {
+  			Boolean ignoreDefaultModel = Boolean.valueOf(element.getAttribute("ignore-default-model-on-redirect"));
+  			handlerAdapterDef.getPropertyValues().add("ignoreDefaultModelOnRedirect", ignoreDefaultModel);
+  		}
+  		if (argumentResolvers != null) {
+  			handlerAdapterDef.getPropertyValues().add("customArgumentResolvers", argumentResolvers);
+  		}
+  		if (returnValueHandlers != null) {
+  			handlerAdapterDef.getPropertyValues().add("customReturnValueHandlers", returnValueHandlers);
+  		}
+  		if (asyncTimeout != null) {
+  			handlerAdapterDef.getPropertyValues().add("asyncRequestTimeout", asyncTimeout);
+  		}
+  		if (asyncExecutor != null) {
+  			handlerAdapterDef.getPropertyValues().add("taskExecutor", asyncExecutor);
+  		}
+  
+  		handlerAdapterDef.getPropertyValues().add("callableInterceptors", callableInterceptors);
+  		handlerAdapterDef.getPropertyValues().add("deferredResultInterceptors", deferredResultInterceptors);
+  		readerContext.getRegistry().registerBeanDefinition(HANDLER_ADAPTER_BEAN_NAME, handlerAdapterDef);
+  
+  		RootBeanDefinition uriContributorDef =
+  				new RootBeanDefinition(CompositeUriComponentsContributorFactoryBean.class);
+  		uriContributorDef.setSource(source);
+  		uriContributorDef.getPropertyValues().addPropertyValue("handlerAdapter", handlerAdapterDef);
+  		uriContributorDef.getPropertyValues().addPropertyValue("conversionService", conversionService);
+  		String uriContributorName = MvcUriComponentsBuilder.MVC_URI_COMPONENTS_CONTRIBUTOR_BEAN_NAME;
+  		readerContext.getRegistry().registerBeanDefinition(uriContributorName, uriContributorDef);
+  
+  		RootBeanDefinition csInterceptorDef = new RootBeanDefinition(ConversionServiceExposingInterceptor.class);
+  		csInterceptorDef.setSource(source);
+  		csInterceptorDef.getConstructorArgumentValues().addIndexedArgumentValue(0, conversionService);
+  		RootBeanDefinition mappedInterceptorDef = new RootBeanDefinition(MappedInterceptor.class);
+  		mappedInterceptorDef.setSource(source);
+  		mappedInterceptorDef.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+  		mappedInterceptorDef.getConstructorArgumentValues().addIndexedArgumentValue(0, (Object) null);
+  		mappedInterceptorDef.getConstructorArgumentValues().addIndexedArgumentValue(1, csInterceptorDef);
+  		String mappedInterceptorName = readerContext.registerWithGeneratedName(mappedInterceptorDef);
+  
+  		RootBeanDefinition methodExceptionResolver = new RootBeanDefinition(ExceptionHandlerExceptionResolver.class);
+  		methodExceptionResolver.setSource(source);
+  		methodExceptionResolver.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+  		methodExceptionResolver.getPropertyValues().add("contentNegotiationManager", contentNegotiationManager);
+  		methodExceptionResolver.getPropertyValues().add("messageConverters", messageConverters);
+  		methodExceptionResolver.getPropertyValues().add("order", 0);
+  		addResponseBodyAdvice(methodExceptionResolver);
+  		if (argumentResolvers != null) {
+  			methodExceptionResolver.getPropertyValues().add("customArgumentResolvers", argumentResolvers);
+  		}
+  		if (returnValueHandlers != null) {
+  			methodExceptionResolver.getPropertyValues().add("customReturnValueHandlers", returnValueHandlers);
+  		}
+  		String methodExResolverName = readerContext.registerWithGeneratedName(methodExceptionResolver);
+  
+  		RootBeanDefinition statusExceptionResolver = new RootBeanDefinition(ResponseStatusExceptionResolver.class);
+  		statusExceptionResolver.setSource(source);
+  		statusExceptionResolver.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+  		statusExceptionResolver.getPropertyValues().add("order", 1);
+  		String statusExResolverName = readerContext.registerWithGeneratedName(statusExceptionResolver);
+  
+  		RootBeanDefinition defaultExceptionResolver = new RootBeanDefinition(DefaultHandlerExceptionResolver.class);
+  		defaultExceptionResolver.setSource(source);
+  		defaultExceptionResolver.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+  		defaultExceptionResolver.getPropertyValues().add("order", 2);
+  		String defaultExResolverName = readerContext.registerWithGeneratedName(defaultExceptionResolver);
+  
+      // 注册各种组件。
+  		context.registerComponent(new BeanComponentDefinition(handlerMappingDef, HANDLER_MAPPING_BEAN_NAME));
+  		context.registerComponent(new BeanComponentDefinition(handlerAdapterDef, HANDLER_ADAPTER_BEAN_NAME));
+  		context.registerComponent(new BeanComponentDefinition(uriContributorDef, uriContributorName));
+  		context.registerComponent(new BeanComponentDefinition(mappedInterceptorDef, mappedInterceptorName));
+  		context.registerComponent(new BeanComponentDefinition(methodExceptionResolver, methodExResolverName));
+  		context.registerComponent(new BeanComponentDefinition(statusExceptionResolver, statusExResolverName));
+  		context.registerComponent(new BeanComponentDefinition(defaultExceptionResolver, defaultExResolverName));
+  
+  		// Ensure BeanNameUrlHandlerMapping (SPR-8289) and default HandlerAdapters are not "turned off"
+  		MvcNamespaceUtils.registerDefaultComponents(context, source);
+  
+  		context.popAndRegisterContainingComponent();
+  
+  		return null;
+  	}
+  ```
+
+### 解决静态资源不能访问
+
+- `<mvc:default-servlet-handler/>`标签向容器中注册了SimpleUrlHandlerMapping，这个HandlerMapping的处理规则是`/**`将全部的请求都转交给Tomcat的Servlet去处理，但是不会向容器内注册`DefaultAnnatationHandlerMapping`，导致动态请求失效。
+- `<mvc:annotation-driven/>`标签会向容器中注册`RequestMappingHandlerMapping`和`RequestMappingHandlerAdapter`用来处理动态请求，`RequestMappingHandlerMapping`的`handlerMethods`属性保存了动态请求的映射路径。
+- `RequestMappingHandlerAdapter`用来解析请求、执行目标方法，相对于基础的`AnnotationMethodMappingHandlerAdapter`而言，`RequestMappingHandlerAdapter`更加高级，对内部参数解析等操作进行了组件化处理。
 
 ## SpringMVC 源码
 
@@ -744,4 +940,110 @@
 | 模版文件视图       | FreeMarkerViewResolver           | 解析为基于 FreeMarker 模版技术的模版文件。                   |
 | 模版文件视图       | VelocityViewResolver             | 解析为基于 Velocity 模版技术的模版文件。                     |
 | 模版文件视图       | VelocityLayoutViewResolver       | 解析为基于 Velocity 模版技术的模版文件。                     |
+
+------
+
+### 请求参数数据绑定流程
+
+- Spring MVC 通过**反射机制对**目标处理方法进行解析，**将请求消息绑定到处理方法的入参中**。数据绑定的核心部件是 `DataBinder`。
+
+- `WebDataBinder` 负责数据绑定工作，WebDataBinder对象包含了一个`ConversionService`和一个`Validator`集合。
+- `ConversionService` 负责数据的格式化、转换的工作。
+- `Validator` 负责数据的校验工作。
+- `AbstractPropertyBindingResult` 记录数据绑定、校验的结果。
+
+<img src="image/%E5%8F%82%E6%95%B0%E7%BB%91%E5%AE%9A%E6%B5%81%E7%A8%8B.png" alt="参数绑定流程" style="zoom:50%;" />
+
+#### 数据绑定的原理和思想
+
+- Javabean 要和页面提交的数据进行一一绑定。
+- 页面提交的所有数据都是字符串。
+
+##### 数据绑定
+
+- `ModelAttributeMethodProcessor#resolveArgument` 完成数据绑定流程。
+- `ModelAttributeMethodProcessor#bindRequestParameters` 真正开始为POJO设置参数的方法。
+
+```java
+@Override
+@Nullable
+public final Object resolveArgument(MethodParameter parameter, @Nullable ModelAndViewContainer mavContainer,
+                                    NativeWebRequest webRequest, @Nullable WebDataBinderFactory binderFactory) throws Exception {
+
+  Assert.state(mavContainer != null, "ModelAttributeMethodProcessor requires ModelAndViewContainer");
+  Assert.state(binderFactory != null, "ModelAttributeMethodProcessor requires WebDataBinderFactory");
+
+  String name = ModelFactory.getNameForParameter(parameter);
+  ModelAttribute ann = parameter.getParameterAnnotation(ModelAttribute.class);
+  if (ann != null) {
+    mavContainer.setBinding(name, ann.binding());
+  }
+
+  Object attribute = null;
+  BindingResult bindingResult = null;
+
+  if (mavContainer.containsAttribute(name)) {
+    attribute = mavContainer.getModel().get(name);
+  }
+  else {
+    // Create attribute instance
+    try {
+      attribute = createAttribute(name, parameter, binderFactory, webRequest);
+    }
+    catch (BindException ex) {
+      if (isBindExceptionRequired(parameter)) {
+        // No BindingResult parameter -> fail with BindException
+        throw ex;
+      }
+      // Otherwise, expose null/empty value and associated BindingResult
+      if (parameter.getParameterType() == Optional.class) {
+        attribute = Optional.empty();
+      }
+      bindingResult = ex.getBindingResult();
+    }
+  }
+
+  if (bindingResult == null) {
+    // Bean property binding and validation;
+    // skipped in case of binding failure on construction.
+    WebDataBinder binder = binderFactory.createBinder(webRequest, attribute, name);
+    if (binder.getTarget() != null) {
+      if (!mavContainer.isBindingDisabled(name)) {
+        // 绑定请求参数到POJO的参数中。
+        bindRequestParameters(binder, webRequest);
+      }
+      validateIfApplicable(binder, parameter);
+      if (binder.getBindingResult().hasErrors() && isBindExceptionRequired(binder, parameter)) {
+        throw new BindException(binder.getBindingResult());
+      }
+    }
+    // Value type adaptation, also covering java.util.Optional
+    if (!parameter.getParameterType().isInstance(attribute)) {
+      attribute = binder.convertIfNecessary(binder.getTarget(), parameter.getParameterType(), parameter);
+    }
+    bindingResult = binder.getBindingResult();
+  }
+
+  // Add resolved attribute and BindingResult at the end of the model
+  Map<String, Object> bindingResultModel = bindingResult.getModel();
+  mavContainer.removeAttributes(bindingResultModel);
+  mavContainer.addAllAttributes(bindingResultModel);
+
+  return attribute;
+}
+
+protected void bindRequestParameters(WebDataBinder binder, NativeWebRequest request) {
+  ((WebRequestDataBinder) binder).bind(request);
+}
+```
+
+#### 数据绑定期的数据格式化
+
+- 对属性对象的输入/输出进行格式化，从其本质上讲依然属于**类型转换**的范畴。
+- Spring 在格式化模块中定义了一个实现 `ConversionService` 接口的 `FormattingConversionService` 实现类，该实现类扩展了 `GenericConversionService`，因此它既具有类型转换的功能，又具有格式化的功能。
+- `FormattingConversionService` 拥有一个 `FormattingConversionServiceFactroyBean` 工厂类，后者用于在 Spring 上下文中构造前者。
+
+#### 数据校验
+
+xxx
 
