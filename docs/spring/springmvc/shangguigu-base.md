@@ -152,10 +152,10 @@
 - Spring MVC默认方式获取参数，在方法上写一个和请求参数同名的参数来接受请求参数值。
   - 传入就封装。
   - 不传入参数为null。
-
 - 通过`@RequestParam("xxx")`指定获取请求参数。
 - `@RequestParam("xxx")` 等同于`request.getParamter("xxx")`。
 - 默认是必须携带的参数。
+- **不指定任何注解的参数，默认就相当于使用`RequestParam`进行解析**。
 
 ### 参数
 
@@ -190,9 +190,79 @@
 ### 参数
 
 - `value` 指定要获取的请求头的key。仅此一个属性的时候，可以省略。
-
 - `required` 指定请求头是否必填，默认是true。
 - `defaultValue` 指明请求头默认值。
+
+## @RequestBody
+
+- **获取一个POST请求的请求体**。
+- 标记在入参的前面。
+
+## @ResponseBody
+
+- 将返回值转换为JSON格式数据，并封装在请求体中。
+- 标记在类或者方法上。
+
+## HttpEntity
+
+- 可以封装请求的信息，包括**请求头**和**请求体**。
+- 泛型指定请求体的类型。
+- 直接在参数上使用此对象。
+
+## ResponseEntity
+
+- 响应实体，泛型指定的是响应体中数据的类型。
+- 可以通过返回`ResponseEntity`向**客户端**返回响应头和**响应体**。
+
+## 文件下载
+
+- 可以通过`ResponseEntity`中指定header实现。
+- 可以通过原生的`Response`对象实现。
+
+## HttpMessageConverter\<T>
+
+- HttpMessageConverter\<T> 是Spring 3.0新增的接口，**负责将请求信息转为一个对象**（类型为 T），或者**将对象（类型为T）输出为响应信息**。
+- 判断是否可以读取指定类型，`boolean canRead(Class<?> clazz, @Nullable MediaType mediaType)`。
+- 判断时候可以写为指定类型，`boolean canWrite(Class<?> clazz, @Nullable MediaType mediaType)`。
+- 获取支持的类型，`List<MediaType> getSupportedMediaTypes()`。
+- 读取请求，`T read(Class<? extends T> clazz, HttpInputMessage inputMessage)`。
+- 写入响应，`void write(T t, @Nullable MediaType contentType, HttpOutputMessage outputMessage)`。
+
+- `DispatcherServlet` 默认装配 `RequestMappingHandlerAdapter`。
+- `RequestMappingHandlerAdapter` 默认装配以下的 `HttpMessageConverter`。
+  - ByteArrayHttpMessageConverter
+  - StringHttpMessageConverter
+  - ResourceHttpMessageConverter
+  - SourceHttpMessageConverter
+  - AllEncompassingFormHttpMessageConverter
+  - Jaxb2RootElementHttpMessageConverter
+- Spring项目加入 `jackson.jar` 包后，`RequestMappingHandlerAdapter` 默认的`HttpMessageConverter` 会增加一个 `MappingJackson2HttpMessageConverter`。
+
+## 文件上传
+
+### 流程
+
+1. 引入 `commons-fileupload`、`commons-io` 两个jar包。
+
+2. 在SpringMVC配置文件中配置文件上传解析器，`MultipartResolver`，id 必须为`multipartResolver`。
+
+   ```xml
+   <bean id="multipartResolver" class="org.springframework.web.multipart.commons.CommonsMultipartResolver">
+     <property name="defaultEncoding" value="UTF-8"/>
+     <property name="maxUploadSize" value="#{1024*1024*10}"/>
+   </bean>
+   ```
+
+3. 接口参数中通 `@RequestParam("xxx")MultipartFile file` 获取指定名称的文件流。
+
+### 常用方法
+
+- `MultipartFile#transferTo()` 保存到指定路径。
+
+### 多文件上传
+
+- `@RequestParam("xxx")MultipartFile[] file`。
+- 处理file数组时候，调用`file.isEmpty()`方法验证下文件是否为空。
 
 ## POJO 封装参数
 
@@ -326,11 +396,51 @@
   - \<fmt:setBundle>
   - \<fmt:setmessage>
 
-### SpringMvc 基于 JstlView 国际化
+### SpringMVC 基于 JstlView 国际化
 
 - 让 Spring 管理国际化资源，`ResourceBundleMessageSource`，bean 的 id 必须是 `messageSource`。
 - 直接去页面使用即可。
 - 直接访问资源文件或者是 `forward` 转发请求，国际化不会生效。
+
+## 拦截器
+
+- SpringMVC 提供了**拦截器机制**允许运行**目标方法之前进行一些拦截工作**，或者**目标方法运行之后进行**一些其他处理。
+- `org.springframework.web.servlet.HandlerInterceptor`效果和概念等同于 `JavaWeb` 的 `Filter`。
+
+### HandlerInterceptor
+
+- **在目标方法运行之前调用**， `boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)`。
+- **在目标方法运行之后调用**，`void postHandle(HttpServletRequest request, HttpServletResponse response, Object handler,@Nullable ModelAndView modelAndView)`。
+- **在请求整个完成之后、来到目标页面之后调用**，`void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler,@Nullable Exception ex)`。
+- 方法返回true，`chain.doFilter()`放行，否则，不放行。
+
+### 自定义拦截器
+
+1. 创建类实现`HandlerInterceptor`接口。
+
+2. 重写三个拦截方法逻辑。
+
+3. 在SpringMVC配置文件中配置拦截器。
+
+   ```xml
+   <mvc:interceptors>
+     <!-- 注入拦截器，默认拦截所有请求-->
+     <bean class="xxx"></bean>
+     <!-- 注入拦截器并详细配置拦截器的信息-->
+     <mvc:interceptor>
+       <mvc:mapping path="/private/"/>
+       <bean class="xxx"></bean>
+     </mvc:interceptor>
+   </mvc:interceptors>
+   ```
+
+### 拦截器的执行流程
+
+1. 拦截器的preHandle方法。
+2. 目标方法。
+3. 拦截器的postHandle方法。
+4. 页面。
+5. 拦截器的afterCompletion方法。
 
 ## ViewController 视图控制器
 
@@ -572,6 +682,78 @@ Spring 定义了 3 种类型的转换器接口，**实现任意一个转换器�
 - `<mvc:default-servlet-handler/>`标签向容器中注册了SimpleUrlHandlerMapping，这个HandlerMapping的处理规则是`/**`将全部的请求都转交给Tomcat的Servlet去处理，但是不会向容器内注册`DefaultAnnatationHandlerMapping`，导致动态请求失效。
 - `<mvc:annotation-driven/>`标签会向容器中注册`RequestMappingHandlerMapping`和`RequestMappingHandlerAdapter`用来处理动态请求，`RequestMappingHandlerMapping`的`handlerMethods`属性保存了动态请求的映射路径。
 - `RequestMappingHandlerAdapter`用来解析请求、执行目标方法，相对于基础的`AnnotationMethodMappingHandlerAdapter`而言，`RequestMappingHandlerAdapter`更加高级，对内部参数解析等操作进行了组件化处理。
+
+## 数据格式化
+
+- 对属性对象的输入/输出进行格式化,从其本质上讲依然属于“类型转换”的范畴。
+- Spring 在格式化模块中定义了一个实现 `ConversionService` 接口的 `FormattingConversionService` 实现类，该实现类扩展了 `GenericConversionService`，因此它既具有类型转换的功能，又具有格式化的功能。
+- FormattingConversionService 拥有一个`FormattingConversionServiceFactroyBean`工厂类，后者用于在 Spring 上下文中构造前者。
+
+### FormattingConversionServiceFactroyBean
+
+- 兼具了类型转换和格式化的功能，包含了`converter` 和 `formatter`。
+
+- 注册了`NumberFormatAnnotationFormatterFactroy`，支持对数字类型的属性使用`@NumberFormat` 注解。
+- 注册了`JodaDateTimeFormatAnnotationFormatterFactroy`，支持对日期类型的属性使用`@DateTimeFormat`注解。
+- `<mvc:annotation-driven>` 默认创建的 `ConversionService` 实例即为 `FormattingConversionServiceFactroyBean`。
+
+### 日期格式化
+
+- 通过在日期类型上标记`@DateTimeFormat`注解并指定参数的格式。
+
+### 数字格式化
+
+- 通过在日期类型上标记`@NumberFormat`注解并指定参数的格式。
+- `style` 属性，类型为 `NumberFormat.Style`，用于指定样式类型。
+  - `Style.NUMBER` 正常数字类型。
+  - `Style. CURRENCY` 货币类型。
+  - `Style. PERCENT` 百分数类型。
+- `pattern` 属性，类型为 String，自定义样式，如 `pattern="#,###"`。
+
+## 数据校验
+
+- SpringMVC遵循`JSR303`规范的数据校验功能。
+- JSR303 通过在 Bean 属性上标注类似于`@NotNull`、`@Max` 等标准的注解指定校验规则，并通过标准的验证接口对 Bean 进行验证。
+- 当便用 Spring MVC 签显示错误消息时，Spring MVC 会查看 WEB 上下文是否装配了对应的国际化消息，如果没有，则显示默认的错误消息，否则使用国际化消息。
+
+### Hibernate Validator
+
+- Hibernate Validator 是一个`JSR303`的参考实现，并且支持额外的扩展注解。
+  - `@Email` 被注释的元素必须是电子邮箱地址。
+  - `@Length` 被注释的字符串的大小必须在指定的范围内。
+  - `@NotEmpty` 被注释的字符串的必须非空。
+  - `@Range` 被注释的元素必须在合适的范围内。
+
+#### 后端快速启用校验框架流程
+
+- 导入 `hibernate validator` 框架相关的 jar包。
+- Tomcat7.0以上无须引用el表达式相关的jar包。
+- 给要校验的JavaBean添加注解。
+- 在SpringMVC封装参数到对象的时候，告诉SpringMVC，需要进行校验，即在参数上添加注解`@Valid`，可以选择增加参数`BindingResult`用来接收校验结果。
+- 可以封装`BindingResult`的验证结果，并将结果放到请求域中，前端表单可以获取到错误信息。
+
+#### 国际化定制错误消息
+
+- 定义国际化文件，编写配置文件，通过占位符`{0}`、`{1}`，可以获取到动态的错误参数。
+  - `{0}` 表示当前属性名。
+  - `{1}` 之后是校验规则，规则按照A-Z大小写顺序排序。
+- Hibernate Validator 校验后，每个字段发生错误以后，都会有自己的**错误代码**。
+- 错误代码可以有多种格式，**国际化文件中错误消息的 key 必须对应上错误代码**。
+- 存在多种错误代码规则的情况下，更精确的规则优先级更高。
+  - `校验规则.隐含模型中对象的key.对象的属性`。
+  - `校验规则.属性名`。
+  - `校验规则.属性类型`。
+  - `校验规则`。
+- 让SpringMVC管理国际化配置文件。
+
+```xml
+<!-- 管理国际化资源文件-->
+<bean id="messageSource" class="org.springframework.context.support.ResourceBundleMessageSource">
+  <property name="basename" value="errors"></property>
+</bean>
+```
+
+
 
 ## SpringMVC 源码
 
