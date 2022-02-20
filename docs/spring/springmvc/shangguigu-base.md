@@ -402,6 +402,34 @@
 - 直接去页面使用即可。
 - 直接访问资源文件或者是 `forward` 转发请求，国际化不会生效。
 
+### LocaleResolver
+
+- `LocaleResolver` 是 `DispatcherServlet` 的九大组件之一。
+- `SpringMVC` 通过 `LocaleResolver` 解析区域信息，完成国际化工作。
+- **区域信息的获取是从请求头中获取到的，和浏览器的语言设置有关。**
+- `AcceptHeaderLocaleResolver` 是 `SpringMVC` 默认配置生效的区域解析器。
+
+### 程序中获取国际化文件的值
+
+- 通过注入 `MessageSource` 对象调用，`MessageSource#getMessage`方法获取指定的值。
+
+### 自定义LocaleResolver
+
+- 通过实现 `LocaleResolver`接口可以实现自定义的 `LocaleResolver`。
+- 在配置文件中配置的时候，id一定要是 `localeResolver`。
+- 通过自定义的 `LocaleResolver`可以实现点击切换语言的功能。
+
+### 常用的LocaleResolver
+
+- `AcceptHeaderLocaleResolver`从请求头获取 `Locale` 信息。
+- `FixLocaleResolver` 使用系统固定的`Locale`信息。
+- `SessionLocaleResolver`从Session中获取 `Locale` 信息。
+- `CookieLocaleResolver`从Session中获取 `Locale` 信息。
+
+### LocaleChangeInterceptor
+
+- 改变区域的拦截器，可以在方法执行前修改区域信息。
+
 ## 拦截器
 
 - SpringMVC 提供了**拦截器机制**允许运行**目标方法之前进行一些拦截工作**，或者**目标方法运行之后进行**一些其他处理。
@@ -441,6 +469,28 @@
 3. 拦截器的postHandle方法。
 4. 页面。
 5. 拦截器的afterCompletion方法。
+
+### 多拦截器运行流程
+
+- 先配置的拦截器执行顺序在前。
+
+#### 正常流程
+
+- 目前方法执行器，正序。
+- 目标方法运行后，逆序。
+
+#### 异常流程
+
+- 哪里不放行，在哪里中断程序的执行。
+- **已经放行的拦截器会执行 `afterCompletion`方法。**
+
+### 拦截器与Filter
+
+- 推荐使用拦截器，拦截器在DispatcherServlet#doServlet方法中的功能更强大。
+- 拦截器配置在容器中，可以自动装配容器中的其他组件。
+- Filter是JavaWeb的对象，有服务器Tomcat管理，Servlet启动后创建对象。
+- 拦截器是由SpringMVC管理，由容器管理，在IOC容器启动的时候创建对象。
+- 简单的、不涉及到其他组件的过滤业务，可以使用Filter来完成。
 
 ## ViewController 视图控制器
 
@@ -1225,7 +1275,59 @@ protected void bindRequestParameters(WebDataBinder binder, NativeWebRequest requ
 - Spring 在格式化模块中定义了一个实现 `ConversionService` 接口的 `FormattingConversionService` 实现类，该实现类扩展了 `GenericConversionService`，因此它既具有类型转换的功能，又具有格式化的功能。
 - `FormattingConversionService` 拥有一个 `FormattingConversionServiceFactroyBean` 工厂类，后者用于在 Spring 上下文中构造前者。
 
-#### 数据校验
+------
 
-xxx
+### 拦截器的运行流程
+
+### 流程解析
+
+- `DispatcherServlet#doDispatch` 方法中通过`DispatcherServlet#getHandler`根据请求获取对应的 `HandlerExecutionChain`。
+
+- `HandlerExecutionChain` 不仅包含了执行请求的处理器的对象，还包含了**生效的拦截器集合**。
+
+- `DispatcherServlet#doDispatch` 通过调用 `HandlerExecutionChain#applyPreHandle`将目标方法的拦截器的`preHandle`方法进行依次调用，对请求进行拦截处理。
+
+- 如果拦截器的`preHandle`方法返回false，就停止继续调用，并之前已经放行的拦截器的afterCompletion，随后返回false。
+
+  ```java
+  boolean applyPreHandle(HttpServletRequest request, HttpServletResponse response) throws Exception {
+    HandlerInterceptor[] interceptors = getInterceptors();
+    if (!ObjectUtils.isEmpty(interceptors)) {
+      for (int i = 0; i < interceptors.length; i++) {
+        HandlerInterceptor interceptor = interceptors[i];
+        // 如果拦截器的prehandle方法返回false，就停止继续调用，并之前已经放行的拦截器的afterCompletion，随后返回false。
+        if (!interceptor.preHandle(request, response, this.handler)) {
+          triggerAfterCompletion(request, response, null);
+          return false;
+        }
+        this.interceptorIndex = i;
+      }
+    }
+    return true;
+  }
+  ```
+
+- 如果拦截器的`preHandle`都执行通过，将执行目标方法。
+
+- 执行目标方法后，通过调用`HandlerExecutionChain#applyPostHandle`，执行拦截器的后置处理拦截。
+
+- 逆序调用拦截器链，逐个调用没个拦截器的`postHandle`方法。
+
+  ```java
+  void applyPostHandle(HttpServletRequest request, HttpServletResponse response, @Nullable ModelAndView mv)
+    throws Exception {
+  
+    HandlerInterceptor[] interceptors = getInterceptors();
+    if (!ObjectUtils.isEmpty(interceptors)) {
+      for (int i = interceptors.length - 1; i >= 0; i--) {
+        HandlerInterceptor interceptor = interceptors[i];
+        interceptor.postHandle(request, response, this.handler, mv);
+      }
+    }
+  }
+  ```
+
+- 如果执行目标方法报错，产生了异常，直接执行页面渲染，不执行`postHandle`方法，通过`DispatcherServlet#triggerAfterCompletion`，执行拦截器的`afterCompletion`方法。
+
+- 如果目标方法没有报错，最终在页面渲染后，通过调用`HandlerExecutionChain#applyAfterConcurrentHandlingStarted`方法调用拦截器的`afterCompletion`方法。
 
