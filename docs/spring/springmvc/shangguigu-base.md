@@ -803,6 +803,163 @@ Spring 定义了 3 种类型的转换器接口，**实现任意一个转换器�
 </bean>
 ```
 
+------
+
+## 异常处理
+
+### HandlerExceptionResolver
+
+- SpringMVC 通过 `HandlerExceptionResolver` 处理程序的异常，包括 `Handler` 映射、数据绑定以及目标方法执行时发生的异常。
+
+- SpringMVC 提供的 `HandlerExceptionResolver` 的实现类。
+  - AbstractHandlerExceptionResolver
+  - AbstractHandlerMethodExceptionResolver
+  - **DefaultHandlerExceptionResolver**
+    - 默认生效。
+    - 处理SpringMVC自带异常。
+  - DefaultErrorAttributes
+  - HandlerExceptionResolverComposite
+  - **ResponseStatusExceptionResolver**
+    - 默认生效。
+    - 处理标记`@Responsestatus`注解的异常。
+  - SimpleMappingExceptionResolver
+  - **ExceptionHandlerExceptionResolver**
+    - 默认生效。
+    - 处理标记`@ExceptionHandler`注解的异常。
+
+### 异常处理流程
+
+- 当请求调用 `DispatcherServlet#doDispatch` 方法后产生了异常时，会被`DispatcherServlet#processDispatchResult`方法处理。
+- `DispatcherServlet#processHandlerException`方法包含了对异常的处理。
+- 根据顺序遍历生效的每一个`HandlerExceptionResolver`的`resolveException`方法进行异常处理，得到处理结果就返回，得到异常的`ModelAndView`。
+- 如果异常解析器都不能处理发送的异常，异常会继续被抛出。
+
+###  @ExceptionHandler
+
+- 用来告诉 SpringMVC 这个方法专门处理这个类发生的异常。
+- 方法的入参能且只能有一个 `Exception` 类型参数。
+- 可以通过设置方法返回值为 `ModelAndView` 类型来封装参数和视图地址。
+- 如果有多个 `@ExceptionHandle`r 都能处理这个异常，精确优先。
+
+#### 全局异常处理
+
+- 编写一个类，提供不同的 `@ExceptionHandler` 方法用来处理不同的异常。
+- 通过在类上标记 `@ControllerAdvice` 将这个集中处理所有异常的类加入到 IOC 容器中并标记为异常处理类。
+- 本类的异常处理器优先于全局的异常处理器，即使全局的匹配更精确。
+
+### @ResponseStatus
+
+- 用于标记在自定义异常类上。
+- `value` 属性，`HttpStatus`类型，表示异常的状态码。
+- `reason` 属性，`String`类型，表示异常的错误信息。
+
+### SimpleMappingExceptionResolver
+
+- 简单映射异常处理器。
+- `SpringMVC` 默认提供用来指定异常和错误页面关系的异常处理器。
+- 需要在SpringMVC配置文件中进行配置后生效。
+- `exceptionMappings` 属性指定异常、异常视图集合。
+- 优先级低于 DefaultHandlerExceptionResolver 等默认异常处理器。
+
+```xml
+<bean class="org.springframework.web.servlet.handler.SimpleMappingExceptionResolver">
+  <!--异常映射关系-->
+  <property name="exceptionMappings">
+    <props>
+      <!-- key 是异常全限定类名-->
+      <prop key="java.lang.NullPointerException">/error/404.html</prop>
+      <!-- value 是视图名-->
+      <prop key="java.lang.EnumConstantNotPresentException">/error/500.html</prop>
+    </props>
+  </property>
+  <!-- 指定封装异常信息的属性名称-->
+  <property name="exceptionAttribute" value="ex"/>
+</bean>
+```
+
+------
+
+## SpringMVC 运行流程
+
+1. 所有请求，前端控制器 `DispatcherServlet` 收到请求，调用 `doDispatch` 进行处理。
+2. 根据 `HandlerMapping` 中保存的请求映射信息找到，处理当前请求的，处理器执行链（包含拦截器）。
+3. 根据当前处理器找到他的 `HandlerAdapter`（适配器）。
+4. 执行拦截器的 preHandle方法。
+5. 适配器执行目标方法，并返回ModelAndView。
+   1. `ModelAttribute`注解标注的方法提前运行。
+   2. 执行目标方法的时候，确定目标方法用的参数。
+6. 执行拦截器的 postHandle方法。
+7. 处理结果，页面渲染流程。
+   1. 如果有异常使用异常解析器处理异常并返回 `ModelAndView`。
+   2. 调用 `render` 方法进行页面渲染。
+      1. 视图解析器根据视图名得到视图对象。
+      2. 视图对象调用 `render` 方法。
+   3. 执行拦截器的 `afterCompletion` 方法。
+
+------
+
+## SpringMVC & Spring 整合
+
+- 整合目的是为了两个框架分工明确。
+
+### SpringMVC 配置文件
+
+- 网站转发逻辑以及网站功能有关的组件。
+- 视图解析器。
+- 文件上传解析器。
+- 异常处理器。
+- ...
+
+### Spring 配置文件
+
+- 和业务有关的配置。
+- 数据源。
+- 事务控制。
+- ...
+
+### 整合方式
+
+### 引用标签
+
+- 通过使用 `Spring` 的 `import`标签，引用外部配置，进行配置解耦分割。
+- 此时应用内只有一个大容器。
+
+```xml
+<import resource="xxx.xml" />
+```
+
+#### 多容器
+
+- 在 `web.xml` 中进行配置并启动多个容器。
+
+- Spring 容器默认成为父容器， 管理业务逻辑组件。
+- SpringMVC 容器为子容器， 管理控制器组件。
+- 父容器不能访问子容器中的对象，子容器可以访问父容器的对象。
+
+```xml
+<!-- 加载spring容器 --> 
+<!-- 初始化加载application.xml的各种配置文件 --> 
+<context-param>    
+  <param-name>contextConfigLocation</param-name> 
+  <param-value>classpath:spring/application-*.xml</param-value>  
+</context-param>  
+<listener>
+  <listener-class>org.springframework.web.context.ContextLoaderListener</listener-class>  
+</listener>  
+<!-- 配置springmvc前端控制器 -->  
+<servlet>
+  <servlet-name>taotao-manager</servlet-name>
+  <servlet-class>org.springframework.web.servlet.DispatcherServlet</servlet-class>
+  <!-- contextConfigLocation不是必须的， 如果不配置contextConfigLocation
+，     springmvc的配置文件默认在：WEB-INF/servlet的name+"-servlet.xml" -->
+  <init-param>        
+    <param-name>contextConfigLocation</param-name>
+    <param-value>classpath:spring/springmvc.xml</param-value>
+  </init-param>    
+  <load-on-startup>1</load-on-startup>  
+</servlet>
+```
+
 
 
 ## SpringMVC 源码
@@ -868,6 +1025,8 @@ Spring 定义了 3 种类型的转换器接口，**实现任意一个转换器�
 - 有的组件是通过类型找到的，有的是通过ID找到的。
 
 - `DispatcherServlet#onRefresh` 实现了父类的方法，在IOC容器启动的时候被调用，完成组件的注册。
+
+- `spring-webmvc-5.2.6.RELEASE.jar!/org/springframework/web/servlet/DispatcherServlet.properties` 是九大组件的默认生效配置。
 
   ```java
   @Override
