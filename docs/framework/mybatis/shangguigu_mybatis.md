@@ -96,7 +96,7 @@
   | keyColumn            | （仅适用于 insert 和 update）设置生成键值在表中的列名，在某些数据库（像 PostgreSQL）中，当主键列不是表中的第一列的时候，是必须设置的。如果生成列不止一个，可以用逗号分隔多个属性名称。 |
   | **databaseId**       | 如果配置了数据库厂商标识（databaseIdProvider），MyBatis 会加载所有不带 databaseId 或匹配当前 databaseId 的语句；如果带和不带的语句都有，则不带的会被忽略。 |
 
-### 参数的取值
+### 参数取值
 
 #### 单个参数
 
@@ -108,7 +108,11 @@
 - 使用 `0,1,2`参数索引信息。
 - 使用 `param1，param2` 参数别名。
 - 只要传入了多个参数，mybatis 会自动的将这些参数封装在一个 map 中，**默认的 key 就是参数位置的索引**。
+
+#### 命名参数
+
 - 通过 `@Param` 注解标记参数封装的 **key**，命名参数。
+- 通过 `#{命名值}` 获取对应参数。
 
 #### map
 
@@ -117,6 +121,38 @@
 #### POJO
 
 - 通过 `#{POJO的属性名}` 获取参数值。
+
+### 参数处理
+
+- 通过 `JavaType` 指明参数的 Java 类型。
+- 通过 `JdbcType` 指明参数转换成的 JDBC 数据类型，默认不指定，oracle 数据库不能处理 null，需要指定 `JdbcType`。
+
+### 取值方式
+
+#### #{属性名} 
+
+- 预编译的方式。
+- 参数对应位置都用 `？`占位，在预编译参数的时候，替换成对应的参数。
+- **安全，可以避免 SQL 注入问题。**
+
+#### ${属性名} 
+
+- 不是预编译的方式。
+- **直接将参数和SQL语句进行拼串**。
+- **不安全，可能存在 SQL 注入问题。**
+- **SQL 语句只有参数位置支持预编译，`表名`、`order by` 等处不支持预编译，只能通过 `${}`进行赋值。**
+
+### 返回值 Map
+
+#### 单条记录
+
+- `key` 是列名。
+- `value` 是列的值。
+
+#### 多条记录
+
+- 通过 `@MapKey`注解在方法上指定结果 Map 的 key 使用结果中的哪个属性。
+- SQL映射文件中的方法的 `resultType` 写的是 map 中元素对象的类型。
 
 ### nameSpace
 
@@ -160,10 +196,59 @@
 ### resultMap
 
 - 结果映射，自定义结果集的封装规则。
+- 增删改查的方法中，通过指定 `resultMap` 属性绑定自定义的映射规则。
+- `<resultType id>`属性为结果Map起一个唯一的别名，便于后续引用。
+- `<resultType type>` 属性指定为哪一个 `JavaBean` 对象创建结果映射。
+- `id` 子标签，为主键字段创建映射规则。
+  - `column` 指定数据库中的主键的列名。
+  - `property` 指定 JavaBean 的属性名。
+- `result` 子标签，为普通字段创建映射规则。
+  - `column` 指定数据库中的列名。
+  - `property` 指定 JavaBean 的属性名。
+
+#### 级联映射
+
+- 级联映射，属性的属性。
+- 可以通过 result 子标签指定 `属性.属性` 的方式，完成对级联属性的赋值。
+- JavaBean中的一个属性也是 JavaBean 的情况下，通过 `association` 子标签定义级联属性的映射规则，推荐。
+  - `<association property>` 指定级联属性在结果集中对应的是属性名称。
+  - `<association javaType>` 指定级联属性的 Java 类型。
+  - `<association select>` 指定通过哪个唯一的标识语句进行级联数据查询。
+  - `<association colomn>` 指定查询级联属性的时候，使用的参数。
+    - 传值多个的情况下使用 `{key=列名, key=列名}` 的方式。
+  - `<association fetchType>` 指定加载时机，可以覆盖全局配置。
+    - `eager` 不延迟。
+    - `lazy` 延迟。 
+- 通过开启全局延迟加载策略，`lazyLoadingEnabled=true、aggressiveLazyLoading=flase`，可以似的Mybatis在使用到级联属性的时候，才执行分布的SQL语句。
+
+#### 集合属性
+
+- 通过 `collection` 子标签定义 `JavaBean` 的集合属性的封装规则。
+  - `<collection property>` 指定集合属性在结果集中对应的是属性名称。
+  - `<collection ofType>` 指定集合属性元素的 Java 类型。
+  - `<collection select>` 指定通过哪个唯一的标识语句进行关联集合数据查询。
+  - `<collection colomn>` 指定查询关联集合属性的时候，使用的参数。
+    - 传值多个的情况下使用 `{key=列名, key=列名}` 的方式。
+- 通过开启全局延迟加载策略，`lazyLoadingEnabled=true、aggressiveLazyLoading=flase`，可以似的Mybatis在使用到集合属性的时候，才执行分布的SQL语句。
+
+### resultType
+
+- 指明查询到的结果和哪个 JavaBean 映射，使用默认的映射规则。
+- 默认的映射规则是属性、列名一一对应。
 
 ### sql
 
 - 抽取可重用的 sql 片段。
+
+### 动态SQL
+
+- 动态 SQL 是 MyBatis 强大特性之一，极大简化了拼装 SQL 的操作。
+- 动态 SQL 元素和使用 `JSTL` 或其他类似基于 `XML` 的文本处理器相似。
+- MyBatis 采用功能强大的基于 `OGNL` 的表达式来简化操作。
+  - **if**
+  - **choose** `when`、`otherwise`
+  - **trim** `where`、`set`
+  - **foreach**
 
 ------
 
@@ -468,3 +553,10 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
   - 注册全类名的话，需要保证配置文件和 DAO 类在一个路径下。
 - 可以通过 `package` 进行批量注册，但是需要保持 SQL 映射文件和 DAO 文件在一个包下。
   - 可以在 `resources` 目录下创建和 DAO 文件所在目录同名的文件夹统一管理 SQL 映射文件，编译后，会合并在 `bin` 目录的同一个文件下。
+
+## 杂谈
+
+### 数据关联关系
+
+- 一对多的情况，外键一定放在多的一端。
+- 多对多的情况，需要单独的中间表来维护外键的关系。
