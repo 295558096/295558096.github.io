@@ -245,10 +245,89 @@
 - 动态 SQL 是 MyBatis 强大特性之一，极大简化了拼装 SQL 的操作。
 - 动态 SQL 元素和使用 `JSTL` 或其他类似基于 `XML` 的文本处理器相似。
 - MyBatis 采用功能强大的基于 `OGNL` 的表达式来简化操作。
-  - **if**
-  - **choose** `when`、`otherwise`
-  - **trim** `where`、`set`
-  - **foreach**
+
+#### OGNL
+
+- `Object Graph Navigation Language`，一种**对象图导航语言**。
+- OGNL 是一种强大的表达式语言，通过它可以非常方便的来操作对象属性。
+  - 访问对象属性。
+  - 调用方法。
+  - 通过`@`调用静态属性和方法。
+  - 可以调用构造方法。
+- 支持`运算符`、`逻辑运算符`，`“`、`<`、`>`等特殊的序号需要进行转义操作。
+- 支持访问集合的伪属性，`size`、`isEmpty`、`keys`、`values`、`iterator`、`next`、`hasNext` 等。
+- `_parameter` 代表传入来的参数。
+  - 单个参数代表参数。
+  - 多个参数代表包含多个参数的 Map。
+- `_databaseId`，代表当前数据库运行环境。
+
+#### if
+
+- 使用动态 SQL 最常见情景是根据条件包含 where 子句的一部分。
+
+- if 标签中可以传入非常强大的判断条件，OGNL 表达式。
+
+  ```sql
+  <select id="findActiveBlogLike"
+       resultType="Blog">
+    SELECT * FROM BLOG WHERE state = ‘ACTIVE’
+    <if test="title != null">
+      AND title like #{title}
+    </if>
+    <if test="author != null and author.name != null">
+      AND author_name like #{author.name}
+    </if>
+  </select>
+  ```
+
+#### where
+
+- 使用 `where` 标签将条件语句 `if` 标签包裹起来。
+- `where` 标签会自动去除拼接后 SQL 语句中**前面**多余的 `and` 。
+
+#### trim
+
+- `trim` 标签用来截取字符串，可以自定义截取规则。
+- `prefix` 属性，为 SQL添加一个前缀。
+- `prefixOverrides` 属性，去除整体字符串前面多余的串。
+- `suffix` 属性，为 SQL添加一个后缀。
+- `suffixOverrides` 属性，去除整体字符串后面多余的串。
+
+#### choose
+
+- `choose` 标签是用来进行语句分支选择的，**多个 `when` 分支只会命中最靠前的一个**。
+- `when` 子标签，用来指定分支的逻辑。
+  - `test` 属性，编写 OGNL 表达式，进行业务判断。
+- `otherwise` 子标签，用来指定分支的其他逻辑情况。
+
+#### foreach
+
+- `foreach` 标签是对集合参数进行遍历的。
+- `collection` 属性，指定要遍历的集合的在参数 Map 中对应的 key。
+  - **List 类型的参数，如果没有指定命名参数，只能通过 `list`为 key 获取集合。**
+- `item` 属性，指定集合中的每一个元素的变量名。
+- `index` 属性，指定索引变量名。
+  - 如果遍历的是一个 map，index 指的是当前 value 对应的 key。
+- `separator` 属性，遍历分隔符。
+- `open` 属性，指定循环开始字符。
+- `close` 属性，指定循环结束字符。
+
+#### set
+
+- `set` 标签，用来解决更新操作中，拼接动态 SQL 后产生多余的逗号的问题。
+- `set` 标签会删除动态语句中，在**最后面**多余出来的逗号。
+
+#### bind
+
+- `bind` 标签，绑定一个表达式的值到一个变量。
+
+#### sql
+
+- `sql` 标签，定义 sql 片段。
+
+#### include
+
+- `include` 标签，引用定义好的 sql 片段。
 
 ------
 
@@ -553,6 +632,55 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
   - 注册全类名的话，需要保证配置文件和 DAO 类在一个路径下。
 - 可以通过 `package` 进行批量注册，但是需要保持 SQL 映射文件和 DAO 文件在一个包下。
   - 可以在 `resources` 目录下创建和 DAO 文件所在目录同名的文件夹统一管理 SQL 映射文件，编译后，会合并在 `bin` 目录的同一个文件下。
+
+------
+
+## 缓存
+
+### 简介
+
+- MyBatis 缓存机制使用的是 Map，用来缓存一些查询的结果。
+- `一级缓存` 线程级别的缓存，本地缓存、SQLSession 级别的缓存。
+- `二级缓存` 全局范围的缓存。
+
+### 一级缓存
+
+- 一级缓存默认存在且开启，不可以被关闭。
+- 每次查询，先看一级缓存中有没有，如果没有就去发送新的 SQL 到数据库。
+- 每个 SqlSession 拥有自己的一级缓存。
+- 只要之前查询过的数据，mybatis 就会保存在一个缓存中（Map)，下次查询直接获取缓存中的查询结果。
+- 一级缓存的使用的是 `PerpetualCache`。
+
+#### 一级缓存失效的场景
+
+- 不同的 SqlSession，使用不同的一级缓存，即使查询相同的 SQL 语句也不会使用缓存。
+- 同一个方法，不同的参数，如果之前没有查询过，那么会发新的 Sql。
+- 在一个 SqlSession 期间执行上任何一次增删改操作，增删改操作会把**缓存清空**。
+- `sqlSession.clearCache()` 手动清空一级缓存。
+- SqlSession 关闭，一级缓存失效。
+
+### 二级缓存
+
+- 二级缓存（second level cache），全局作用域缓存。
+- 二级缓存默认不开启，需要手动配置。
+- MyBatis 提供二级缓存的接口以及实现，缓存实现要求 POJO 实现 Serializable 接口。
+- **二级缓存在 SqlSession 关闭或提交之后才会生效。**
+
+#### 使用步骤
+
+- 全局配置文件中开启二级缓存。
+
+  ```xml
+  <setting name="cacheEnabled" value="true" />
+  ```
+
+- 需要使用二级缓存的映射文件处使用 `cache` 配置缓存。
+
+  ```xml
+  <cache/>
+  ```
+
+- POJO 需要实现 Serializable 接口。
 
 ## 杂谈
 
