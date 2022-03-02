@@ -566,7 +566,7 @@
 
 ## 分布式
 
-### TCC 分布式事务
+### TCC分布式事务
 
 #### TCC 的阶段一 Try 
 
@@ -648,7 +648,7 @@
 
 ------
 
-### Redisson 实现 Redis 分布式锁的底层原理
+### Redisson分布式锁的底层原理
 
 #### 加锁机制
 
@@ -736,4 +736,289 @@ lock: {
 #### 分布式锁优化
 
 - 分布式锁一旦加了之后，对同一个商品的下单请求，会导致所有客户端都必须对同一个商品的库存锁 key 进行加锁。
-- 核心思路，就是**分段加锁**。
+- 分布式锁保证了数据的准确性，但是天然并发能力有点弱。
+- 使用分布式锁会导致所有客户端都必须对同一个锁 key 进行加锁，导致请求串行化。优化的核心思路，就是**分段加锁**。
+- 分段锁的思路参考 `LongAdder` 和 `ConcurrentHashMap`，通过分段加锁的方式，解决的是CAS类操作在高并发场景下，使用乐观锁思路，会导致大量线程长时间重复循环。
+- 分段CAS操作，失败则自动迁移到下一个分段进行CAS。
+
+#### 重点实现
+
+- 如果加锁过程中发现资源不足，需要自动释放锁，立即换下一个分段资源，再次尝试加锁后尝试处理。
+
+#### 方案缺陷
+
+- 实现方案过于复杂，资源需要进行分段管理。
+- 每次处理分段资源请求需要通过随机算法，随机挑选分段。
+- 某个分段中的数据不足，需要自动切换到下一个分段数据去处理。
+
+------
+
+### Zookeeper分布式锁原理
+
+`Curator` 框架对 Zookeeper 客户端进行封装，提供了基于 Zookeeper 的分布式锁实现。
+
+#### 分布式锁实现
+
+- 加锁请求是用到 Zookeeper 中的一个特殊的概念，叫做`临时顺序节点`。
+
+- 顺序节点有 Zookeeper 内部自行维护的一个节点序号，**最后一个数字都是依次递增的**，从1开始逐次递增。Zookeeper 会维护这个顺序。
+
+- Curator 创建的节点数据示例，加锁请求会**在要加锁的 node 下搞一个临时顺序节点**，长长的名字都是 Curator 框架自己生成出来的。
+
+  ```xml
+  - mylock
+  	- _xasd1254-asda-324asd-asd-lock-00000001 
+  ```
+
+- 创建完一个顺序节点，客户端需要检查锁节点下所有子节点。
+
+- 获取所有的子节点后，客户端判断是否自己创建的顺序节点排在第一个。
+
+  - 如果是的话，说明分布式锁添加成功，开始执行加锁业务。
+  - 如果不是的话，说明分布式锁添加失败，客户端会通过 Zookeeper 的 api 在上一个顺序节点上添加一个监听器，等到上一个节点的数据发生变化（即锁释放节点被删除），重新判断自己是否获取到锁。
+
+- 锁释放的过程就是将自己在 Zookeeper 中创建的顺序节点删除，如果该顺序节点上有注册的监听器，同时调用监听器进行回调。
+
+#### 总结
+
+- 使用 `临时顺序节点` 是为了解决系统出现意外情况，锁不能正常释放，**当 Zookeeper 感知到对应的客户端发生宕机，会自动删除对应的临时顺序节点**。
+- 自动删除节点相当于**释放锁**或者**取消排队**。
+
+#### 图例
+
+![Zookeeper 分布式锁原理](README-image/Zookeeper%20%E5%88%86%E5%B8%83%E5%BC%8F%E9%94%81%E5%8E%9F%E7%90%86.jpg)
+
+------
+
+### 分布式存储系统容错架构
+
+#### 简介
+
+- 分布式存储系统指的是将超大的数据存储进行分片分段存储在各个服务器的系统。
+- 分布式存储为了保证数据的完整性和集群的可用性往往会对分片备份多个副本。
+
+#### 基础能力
+
+- 数据分片存储。
+- 多副本冗余。
+- 宕机感知。
+- 自动副本迁移。
+- 多余副本删除。
+
+#### 系统设计
+
+- 从架构层面来看，分布式存储系统，应该有两种进程。
+- Master 节点。
+  - 负责统一管控分散在多台机器上的数据。
+  - 通过监控 Slave 的心跳来确定副本是否丢失，当确定副本丢失后，Master 不会在从对应节点读取数据，并且会根据丢失的数据创建新的副本到其他 Slave。
+  - 当副本数量不足时，需要自动进行副本迁移产生新的副本，当宕机的 Slave 恢复后，会自动将多余的副本进行删除。
+- Slave 节点。
+  - 负责管理那台机器上的数据。
+  - 负责和 Master 节点进行通信。
+
+- 数据分片需要以**多副本**的方式存放在多个 Slave 节点，避免因为部分节点宕机、损坏造成的数据丢失。
+- 优秀的数据备份算法是分布式存储系统至关重要的一环。
+
+------
+
+### Elasticsearch架构原理
+
+#### 倒排索引
+
+- 所谓的倒排索引，就是把数据内容先分词，每句话分成一个一个的关键词，记录好每个关键词对应出现在了哪些 id 标识的数据里。
+- 进行关键字检索的时候，会直接扫描这个倒排索引，在倒排索引里找到关键词对应的那些数据的 id。
+- **分词器**和**词库**的结果影响搜索引擎的检索效果。
+- 利用倒排索引查找数据的方式，也被称之为**全文检索**。
+
+#### 分布式搜索引擎
+
+- 分布式搜索引擎的核心是分布式，每个节点存储着部分的数据分片。
+- 进行数据检索时，每个节点都进行检索任务，最后将数据汇总、返回。
+- 通过分布式检索，大大地提高了响应速度。
+- 每个节点的分片数据也会有副本备份，避免某个子节点宕机导致的数据丢失。
+
+#### Elasticsearch 的数据结构
+
+- `index` 索引，有点类似于数据库里的一张表，大概对应表的那个概念。
+- `document` 文档，就代表了 index 中的一条数据。
+
+#### Shard 数据分片机制
+
+- **Shard 数据分片结构**。
+- 每个 index 都可以指定创建多少个 `shard`，每个 shard 就是一个**数据分片**，会负责存储这个 index 的**一部分数据**。
+
+#### Replica 多副本数据冗余机制
+
+- 为了实现高可用使用 Replica 多副本数据冗余机制。
+- 在 Elasticsearch 里，就是支持对每个index设置一个 replica 数量的，也就是每个 shard 对应的 replica 副本的数量。
+- 初始的 shard 就是 `primary shard`，副本的 shard 是 `replica shard`，`primary shard` 和 `replica shard` 是绝对不会放在一台机器上的，避免一台机器宕机直接一个 shard 的副本也同时丢失。 
+- Elasticsearch 默认是支持每个 index 是 5 个 primary shard，每个 primary shard 有 1 个 replica shard 作为副本。
+
+------
+
+### 分布式系统的唯一id生成算法
+
+#### 独立数据库自增id
+
+- 通过独立库的一个独立表里插入一条没什么业务含义的数据，然后获取一个数据库自增的一个 id。
+- 拿到这个 id 之后再往对应的分库分表里去写入。
+- 利用数据库自增 id 的方案实现简单，缺点就是在高并发场景下，会有性能瓶颈。
+
+#### UUID
+
+- 使用 UUID 的好处是每个系统本地生成，不用依赖与数据库。
+- 缺点是 UUID 过长，而且作为主键性能很差，不适合做主键。
+- 建议 UUID 可以用来做随机的文件名。
+
+#### 系统当前时间
+
+- 获取当前时间作为全局唯一的 id。
+- 方案的缺陷很明显，高并发场景会出现重复的情况。
+- 如果使用这个方案，推荐是将**当前时间跟很多其他的业务字段拼接起来**，满足业务场景，即可。
+- 可以使用 `时间戳 + 用户id + 业务含义编码` 的方案作为订单编号。
+
+#### snowflake算法的思想分析
+
+- snowflake 算法，也叫雪花算法，是 twitter 开源的分布式id生成算法。
+- 其核心思想就是使用一个 64 bit 的 long 型的数字作为全局唯一 id。
+  - 第 1 位 bit 是不用的，因为二进制里第一个 bit 如果是 1 的话，表示的是负数。
+  - 第 2 位 ~ 第 42 位是 时间戳，单位是毫秒。
+  - 第 43 位 ~ 第 47 位是机房 id，代表的是这个服务最多可以部署在 2^10 台机器上，也就是 1024 台机器，存在机房 32 个。
+  - 第 48 位 ~ 第 52 位 位表示机器 id，每个机房里可以代表 $2 ^ 5$ 个机器，32 台机器。
+  - 第 53 位 ~ 第 64 位 bit 作为序列号，就是某个机房某台机器上这一毫秒内同时生成的 id 的序号，$2 ^{12} - 1 = 4096$，就是说可以用这个 12 bit 代表的数字来区分同一个毫秒内的 4096 个不同的id。
+- snowflake 算法的系统根据请求的机器的机房 id、机器 id和是当前毫秒的第 n 个请求为条件，创建一个唯一的 id 并返回。
+- **总之雪花算法的思想就是用一个 64bit 的数字中各个 bit 位来设置不同的标志位，区分每一个 id。**
+
+#### 雪花算法实现代码
+
+```java
+public class IdWorker {
+
+   private long workerId; // 这个就是代表了机器id
+   private long datacenterId; // 这个就是代表了机房id
+   private long sequence; // 这个就是代表了一毫秒内生成的多个id的最新序号
+
+   public IdWorker(long workerId, long datacenterId, long sequence) {
+
+       // sanity check for workerId
+       // 这儿不就检查了一下，要求就是你传递进来的机房id和机器id不能超过32，不能小于0
+       if (workerId > maxWorkerId || workerId < 0) {
+           
+           throw new IllegalArgumentException(
+               String.format("worker Id can't be greater than %d or less than 0",maxWorkerId));
+       }
+       
+       if (datacenterId > maxDatacenterId || datacenterId < 0) {
+       
+           throw new IllegalArgumentException(
+               String.format("datacenter Id can't be greater than %d or less than 0",maxDatacenterId));
+       }
+
+       this.workerId = workerId;
+       this.datacenterId = datacenterId;
+       this.sequence = sequence;
+   }
+
+   private long twepoch = 1288834974657L;
+
+   private long workerIdBits = 5L;
+   private long datacenterIdBits = 5L;
+   
+   // 这个是二进制运算，就是5 bit最多只能有31个数字，也就是说机器id最多只能是32以内
+   private long maxWorkerId = -1L ^ (-1L << workerIdBits);
+
+   // 这个是一个意思，就是5 bit最多只能有31个数字，机房id最多只能是32以内
+   private long maxDatacenterId = -1L ^ (-1L << datacenterIdBits);
+   private long sequenceBits = 12L;
+
+   private long workerIdShift = sequenceBits;
+   private long datacenterIdShift = sequenceBits + workerIdBits;
+   private long timestampLeftShift = sequenceBits + workerIdBits + datacenterIdBits;
+   private long sequenceMask = -1L ^ (-1L << sequenceBits);
+
+   private long lastTimestamp = -1L;
+
+   public long getWorkerId(){
+       return workerId;
+   }
+
+   public long getDatacenterId() {
+       return datacenterId;
+   }
+
+   public long getTimestamp() {
+       return System.currentTimeMillis();
+   }
+
+   // 这个是核心方法，通过调用nextId()方法，让当前这台机器上的snowflake算法程序生成一个全局唯一的id
+   public synchronized long nextId() {
+
+       // 这儿就是获取当前时间戳，单位是毫秒
+       long timestamp = timeGen();
+
+       if (timestamp < lastTimestamp) {
+           System.err.printf(
+               "clock is moving backwards. Rejecting requests until %d.", lastTimestamp);
+           throw new RuntimeException(
+               String.format("Clock moved backwards. Refusing to generate id for %d milliseconds",
+                             lastTimestamp - timestamp));
+       }
+
+       
+       // 下面是说假设在同一个毫秒内，又发送了一个请求生成一个id
+       // 这个时候就得把seqence序号给递增1，最多就是4096
+       if (lastTimestamp == timestamp) {
+       
+           // 这个意思是说一个毫秒内最多只能有4096个数字，无论你传递多少进来，
+           //这个位运算保证始终就是在4096这个范围内，避免你自己传递个sequence超过了4096这个范围
+           sequence = (sequence + 1) & sequenceMask;
+
+           if (sequence == 0) {
+               timestamp = tilNextMillis(lastTimestamp);
+           }
+       
+       } else {
+           sequence = 0;
+       }
+
+       // 这儿记录一下最近一次生成id的时间戳，单位是毫秒
+       lastTimestamp = timestamp;
+
+       // 这儿就是最核心的二进制位运算操作，生成一个64bit的id
+       // 先将当前时间戳左移，放到41 bit那儿；将机房id左移放到5 bit那儿；将机器id左移放到5 bit那儿；将序号放最后12 bit
+       // 最后拼接起来成一个64 bit的二进制数字，转换成10进制就是个long型
+       return ((timestamp - twepoch) << timestampLeftShift) |
+               (datacenterId << datacenterIdShift) |
+               (workerId << workerIdShift) | sequence;
+   }
+
+   private long tilNextMillis(long lastTimestamp) {
+       
+       long timestamp = timeGen();
+       
+       while (timestamp <= lastTimestamp) {
+           timestamp = timeGen();
+       }
+       return timestamp;
+   }
+
+   private long timeGen(){
+       return System.currentTimeMillis();
+   }
+
+   //---------------测试---------------
+   public static void main(String[] args) {
+       
+       IdWorker worker = new IdWorker(1,1,1);
+       
+       for (int i = 0; i < 30; i++) {
+           System.out.println(worker.nextId());
+       }
+   }
+}
+```
+
+#### 雪花算法改进思路
+
+- 很多时候，机房并没有那么多，所以那 5 个 bit 用做机房id可能意义不是太大，这几位可以变成具体业务的 id。
+- 可以根据系统的体量和实际情况调整后面时间戳之后的位数对应的含义，调整最大的 id 数。
