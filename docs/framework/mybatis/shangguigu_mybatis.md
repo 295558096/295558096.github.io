@@ -666,6 +666,28 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
 - MyBatis 提供二级缓存的接口以及实现，缓存实现要求 POJO 实现 Serializable 接口。
 - **二级缓存在 SqlSession 关闭或提交之后才会生效。**
 
+#### 属性
+
+- `eviction`
+  - 缓存回收策略，默认 LRU。
+  - `LRU` 最近最少使用的，移除最长时问不被使用的对象。
+  - `FIFO` 先进先出，按对象进入缓存的顺序来移除它们。
+  - `SOFT` 软引用，移除基于垃圾回收器状态和软引用规则的对象。
+  - `WEAK` 弱引用，更积极地移除基于垃圾收集器状态和弱引用规则的对象。
+- `flushInterval`
+  - 刷新间隔，单位毫秒。
+  - 默认情况是不设置，也就是没有刷新间隔，缓存仅仅调用语句时刷新。
+- `size`
+  - 引用数目，正整数。
+  - 代表缓存最多可以存储多少个对象，太大容易导致内存溢出。
+
+- `readOnly`
+  - `true` 只读缓存，会给所有调用者返回缓存对象的相同实例。因此这些对象不能被修改。这提供了很重要的性能优势。
+  - `false` 读写缓存，会返回缓存对象的拷贝（通过序列化）。这会慢一些，但是安全，因此**默认是 false**。
+- `type`
+  - 指定使用的缓存类型。
+  - 默认使用 Mybatis 自己内置的缓存 Map。
+
 #### 使用步骤
 
 - 全局配置文件中开启二级缓存。
@@ -681,6 +703,167 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
   ```
 
 - POJO 需要实现 Serializable 接口。
+
+### 整合第三方缓存
+
+- Mybatis 的默认缓存使用的是 Map，过于简陋。
+- Mybatis 的缓存定义成 Cache 接口，可以通过实现 Cache 接口，扩展缓存实现方案。
+- EhCache、Redis 等第三方缓存中间件和框架都可以和 Mybatis 进行整合，进而实现更强大的缓存功能。
+- 在 SQL映射文件中的 `cache` 标签的 `type` 属性指定使用的缓存实现。
+- 在 SQL映射文件中的 `cache-ref`  标签指定和其他的名称空间使用同一块缓存。
+
+### 总结
+
+- **不会出现一级缓存和二级缓存中有同一个数据。**
+- **任何时候都是先看二级缓存、再看一级缓存，如果都没有就去查询数据库。**
+- 一级缓存默认开启且不能关闭，Mybatis中的配置和标签属性都控制的是二级缓存是否生效。
+- `select` 标签的 `useCache` 属性是指定是否使用二级缓存的。
+- 增删改标签的属性 `flushCache` 同时清空一级缓存和二级缓存，默认是true。
+- 查询标签的属性 `flushCache` 同时清空一级缓存和二级缓存，默认是false。
+- `sqlSession.clearCache()` 只清空一级缓存。
+
+## SSM整合
+
+### 导包
+
+#### Spring
+
+##### aop核心
+
+- com.springsource.net.sf.cglib.jar
+- com.springsource.org. aopalliance.jar
+- com.springsource.org.aspectj.weaver.jar
+- spring-aspects.jar
+
+##### ioc核心
+
+- commons-logging.jar
+- spring-aop.jar
+- spring-beans.jar
+- spring-context.jar
+- spring-core.jar
+- spring-expression.jar
+
+##### jdbc核心
+
+- spring-jdbc.jar
+- spring-orm.jar
+- spring-tx.jar
+
+##### 单元测试
+
+- spring-test.jar
+
+#### SpringMVC
+
+##### mvc核心
+
+- spring-web.jar
+- spring-webmvc.jar
+
+##### 文件上传
+
+- commons-io.jar
+- commons-fileupload.jar
+
+##### 数据校验
+
+- hibernate-validator.jar
+- hibernate-validator-annotation-processor.jar
+- classmate.jar
+- jboss-logging.jar
+- validation-api.jar
+
+#### Mybatis
+
+##### mybatis核心
+
+- mybatis.jar
+
+#### 其他
+
+##### 数据库驱动
+
+- mysql-connector-java.jar
+
+##### 数据源
+
+- c3p0.jar
+
+### 写配置
+
+#### Web
+
+- 编写 `web.xml`。
+
+#### Spring
+
+- 在 `web.xml` 中注册监听器 `org.springframework.web.context.ContextLoaderListener` 来启动 Spring 容器。
+- 通过在 `context-param`中配置`ContextConfigLocation`属性来指定 Spring 配置文件的位置。
+
+```xml
+<!-- Spring加载的xml文件,不配置默认为applicationContext.xml -->
+<context-param>
+  <param-name>contextConfigLocation</param-name>
+  <param-value>/WEB-INF/springConfig.xml</param-value>
+</context-param>
+<!-- 该类作为spring的listener使用，它会在创建时自动查找web.xml配置的applicationContext.xml文件 -->
+<listener>
+  <listener-class>
+    org.springframework.web.context.ContextLoaderListener
+  </listener-class>
+</listener>
+```
+
+#### SpringMVC
+
+- 在 `web.xml`注册 SpringMVC 的 `DispatcherServlet` 前端控制器。
+- 在 `web.xml`注册编码过滤器，`CharacterEncodingFilter`。
+- 在 `web.xml`注册支持 Rest 风格请求的过滤器，`HiddenHttpMethodFilter`。
+
+```xml
+<!--spring mvc配置-->
+<!-- 配置Sping MVC的DispatcherServlet,也可以配置为继承了DispatcherServlet的自定义类,这里配置spring mvc的配置(扫描controller) -->
+<servlet>
+  <servlet-name>springmvcservlet</servlet-name>
+  <servlet-class>org.springframework.web.servlet.DispatcherServlet</servlet-class>
+  <!-- spring MVC的配置文件 -->
+  <init-param>
+    <param-name>contextConfigLocation</param-name>
+    <param-value>/WEB-INF/springmvc.xml</param-value>
+  </init-param>
+  <!-- 下面值小一点比较合适，会优先加载 -->
+  <load-on-startup>1</load-on-startup>
+</servlet>
+<servlet-mapping>
+  <servlet-name>springmvcservlet</servlet-name>
+  <url-pattern>/</url-pattern>
+</servlet-mapping>
+
+<!-- 配置请求过滤器，编码格式设为UTF-8，避免中文乱码 -->
+<filter>
+  <filter-name>charsetfilter</filter-name>
+  <filter-class>
+    org.springframework.web.filter.CharacterEncodingFilter
+  </filter-class>
+  <init-param>
+    <param-name>encoding</param-name>
+    <param-value>UTF-8</param-value>
+  </init-param>
+  <init-param>
+    <param-name>forceEncoding</param-name>
+    <param-value>true</param-value>
+  </init-param>
+</filter>
+<filter-mapping>
+  <filter-name>charsetfilter</filter-name>
+  <url-pattern>/*</url-pattern>
+</filter-mapping>
+```
+
+#### Mybatis
+
+#### 其他
 
 ## 杂谈
 
