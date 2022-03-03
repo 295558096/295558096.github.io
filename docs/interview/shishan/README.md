@@ -390,7 +390,7 @@
 
 ## 微服务
 
-### Spring Cloud 底层原理
+### Spring Cloud底层原理
 
 #### Eureka
 
@@ -430,9 +430,9 @@
 
 ------
 
-### Eureka 如何承载每日千万级访问
+### Eureka如何承载每日千万级访问
 
-#### Eureka 的服务注册与心跳管理
+#### Eureka的服务注册与心跳管理
 
 - 各个服务内的 `Eureka Client` 组件默认是**每隔 30 秒**向  `Eureka Server` 获取最新的服务器应用列表信息。
 - Eureka 的心跳机制，各个 `Eureka Client` **每隔 30 秒**会发送一次心跳到 **Eureka Server**。
@@ -478,7 +478,7 @@
 
 ------
 
-### 每秒上万并发下的 Spring Cloud 参数优化实战
+### 每秒上万并发下的Spring Cloud参数优化实战
 
 #### 问题成因
 
@@ -536,7 +536,7 @@
 
 ------
 
-### Consul 微服务注册中心
+### Consul微服务注册中心
 
 #### 简介
 
@@ -894,127 +894,105 @@ lock: {
 ```java
 public class IdWorker {
 
-   private long workerId; // 这个就是代表了机器id
-   private long datacenterId; // 这个就是代表了机房id
-   private long sequence; // 这个就是代表了一毫秒内生成的多个id的最新序号
+    private final long workerId; // 这个就是代表了机器id
+    private final long datacenterId; // 这个就是代表了机房id
+    private long sequence; // 这个就是代表了一毫秒内生成的多个id的最新序号
 
-   public IdWorker(long workerId, long datacenterId, long sequence) {
+    private long twepoch = 1288834974657L;
+    private final long workerIdBits = 5L;
+    private final long datacenterIdBits = 5L;
+    // 这个是二进制运算，就是5 bit最多只能有31个数字，也就是说机器id最多只能是32以内
+    private long maxWorkerId = -1L ^ (-1L << workerIdBits);
+    // 这个是一个意思，就是5 bit最多只能有31个数字，机房id最多只能是32以内
+    private long maxDatacenterId = -1L ^ (-1L << datacenterIdBits);
 
-       // sanity check for workerId
-       // 这儿不就检查了一下，要求就是你传递进来的机房id和机器id不能超过32，不能小于0
-       if (workerId > maxWorkerId || workerId < 0) {
-           
-           throw new IllegalArgumentException(
-               String.format("worker Id can't be greater than %d or less than 0",maxWorkerId));
-       }
-       
-       if (datacenterId > maxDatacenterId || datacenterId < 0) {
-       
-           throw new IllegalArgumentException(
-               String.format("datacenter Id can't be greater than %d or less than 0",maxDatacenterId));
-       }
+    private final long sequenceBits = 12L;
+    private long workerIdShift = sequenceBits;
+    private long datacenterIdShift = sequenceBits + workerIdBits;
+    private long timestampLeftShift = sequenceBits + workerIdBits + datacenterIdBits;
 
-       this.workerId = workerId;
-       this.datacenterId = datacenterId;
-       this.sequence = sequence;
-   }
+    private long sequenceMask = -1L ^ (-1L << sequenceBits);
 
-   private long twepoch = 1288834974657L;
+    private long lastTimestamp = -1L;
 
-   private long workerIdBits = 5L;
-   private long datacenterIdBits = 5L;
-   
-   // 这个是二进制运算，就是5 bit最多只能有31个数字，也就是说机器id最多只能是32以内
-   private long maxWorkerId = -1L ^ (-1L << workerIdBits);
+    public IdWorker(long workerId, long datacenterId, long sequence) {
+        if (workerId > maxWorkerId || workerId < 0) {
+            throw new IllegalArgumentException(
+                String.format("worker Id can't be greater than %d or less than 0", maxWorkerId));
+        }
+        if (datacenterId > maxDatacenterId || datacenterId < 0) {
+            throw new IllegalArgumentException(
+                String.format("datacenter Id can't be greater than %d or less than 0", maxDatacenterId));
+        }
+        this.workerId = workerId;
+        this.datacenterId = datacenterId;
+        this.sequence = sequence;
+    }
 
-   // 这个是一个意思，就是5 bit最多只能有31个数字，机房id最多只能是32以内
-   private long maxDatacenterId = -1L ^ (-1L << datacenterIdBits);
-   private long sequenceBits = 12L;
+    public long getWorkerId() {
+        return workerId;
+    }
 
-   private long workerIdShift = sequenceBits;
-   private long datacenterIdShift = sequenceBits + workerIdBits;
-   private long timestampLeftShift = sequenceBits + workerIdBits + datacenterIdBits;
-   private long sequenceMask = -1L ^ (-1L << sequenceBits);
+    public long getDatacenterId() {
+        return datacenterId;
+    }
 
-   private long lastTimestamp = -1L;
+    public long getTimestamp() {
+        return System.currentTimeMillis();
+    }
 
-   public long getWorkerId(){
-       return workerId;
-   }
+    // 这个是核心方法，通过调用nextId()方法，让当前这台机器上的snowflake算法程序生成一个全局唯一的id
+    public synchronized long nextId() {
+        // 这儿就是获取当前时间戳，单位是毫秒
+        long timestamp = timeGen();
+        if (timestamp < lastTimestamp) {
+            System.err.printf(
+                "clock is moving backwards. Rejecting requests until %d.", lastTimestamp);
+            throw new RuntimeException(
+                String.format("Clock moved backwards. Refusing to generate id for %d milliseconds",
+                    lastTimestamp - timestamp));
+        }
+        // 下面是说假设在同一个毫秒内，又发送了一个请求生成一个id
+        // 这个时候就得把seqence序号给递增1，最多就是4096
+        if (lastTimestamp == timestamp) {
+            // 这个意思是说一个毫秒内最多只能有4096个数字，无论你传递多少进来，
+            //这个位运算保证始终就是在4096这个范围内，避免你自己传递个sequence超过了4096这个范围
+            sequence = (sequence + 1) & sequenceMask;
+            if (sequence == 0) {
+                timestamp = tilNextMillis(lastTimestamp);
+            }
+        } else {
+            sequence = 0;
+        }
+        // 这儿记录一下最近一次生成id的时间戳，单位是毫秒
+        lastTimestamp = timestamp;
+        // 这儿就是最核心的二进制位运算操作，生成一个64bit的id
+        // 先将当前时间戳左移，放到41 bit那儿；将机房id左移放到5 bit那儿；将机器id左移放到5 bit那儿；将序号放最后12 bit
+        // 最后拼接起来成一个64 bit的二进制数字，转换成10进制就是个long型
+        return ((timestamp - twepoch) << timestampLeftShift) |
+            (datacenterId << datacenterIdShift) |
+            (workerId << workerIdShift) | sequence;
+    }
 
-   public long getDatacenterId() {
-       return datacenterId;
-   }
+    private long tilNextMillis(long lastTimestamp) {
+        long timestamp = timeGen();
+        while (timestamp <= lastTimestamp) {
+            timestamp = timeGen();
+        }
+        return timestamp;
+    }
 
-   public long getTimestamp() {
-       return System.currentTimeMillis();
-   }
+    private long timeGen() {
+        return System.currentTimeMillis();
+    }
 
-   // 这个是核心方法，通过调用nextId()方法，让当前这台机器上的snowflake算法程序生成一个全局唯一的id
-   public synchronized long nextId() {
-
-       // 这儿就是获取当前时间戳，单位是毫秒
-       long timestamp = timeGen();
-
-       if (timestamp < lastTimestamp) {
-           System.err.printf(
-               "clock is moving backwards. Rejecting requests until %d.", lastTimestamp);
-           throw new RuntimeException(
-               String.format("Clock moved backwards. Refusing to generate id for %d milliseconds",
-                             lastTimestamp - timestamp));
-       }
-
-       
-       // 下面是说假设在同一个毫秒内，又发送了一个请求生成一个id
-       // 这个时候就得把seqence序号给递增1，最多就是4096
-       if (lastTimestamp == timestamp) {
-       
-           // 这个意思是说一个毫秒内最多只能有4096个数字，无论你传递多少进来，
-           //这个位运算保证始终就是在4096这个范围内，避免你自己传递个sequence超过了4096这个范围
-           sequence = (sequence + 1) & sequenceMask;
-
-           if (sequence == 0) {
-               timestamp = tilNextMillis(lastTimestamp);
-           }
-       
-       } else {
-           sequence = 0;
-       }
-
-       // 这儿记录一下最近一次生成id的时间戳，单位是毫秒
-       lastTimestamp = timestamp;
-
-       // 这儿就是最核心的二进制位运算操作，生成一个64bit的id
-       // 先将当前时间戳左移，放到41 bit那儿；将机房id左移放到5 bit那儿；将机器id左移放到5 bit那儿；将序号放最后12 bit
-       // 最后拼接起来成一个64 bit的二进制数字，转换成10进制就是个long型
-       return ((timestamp - twepoch) << timestampLeftShift) |
-               (datacenterId << datacenterIdShift) |
-               (workerId << workerIdShift) | sequence;
-   }
-
-   private long tilNextMillis(long lastTimestamp) {
-       
-       long timestamp = timeGen();
-       
-       while (timestamp <= lastTimestamp) {
-           timestamp = timeGen();
-       }
-       return timestamp;
-   }
-
-   private long timeGen(){
-       return System.currentTimeMillis();
-   }
-
-   //---------------测试---------------
-   public static void main(String[] args) {
-       
-       IdWorker worker = new IdWorker(1,1,1);
-       
-       for (int i = 0; i < 30; i++) {
-           System.out.println(worker.nextId());
-       }
-   }
+    //---------------测试---------------
+    public static void main(String[] args) {
+        IdWorker worker = new IdWorker(1, 1, 1);
+        for (int i = 0; i < 30; i++) {
+            System.out.println(worker.nextId());
+        }
+    }
 }
 ```
 
@@ -1022,3 +1000,214 @@ public class IdWorker {
 
 - 很多时候，机房并没有那么多，所以那 5 个 bit 用做机房id可能意义不是太大，这几位可以变成具体业务的 id。
 - 可以根据系统的体量和实际情况调整后面时间戳之后的位数对应的含义，调整最大的 id 数。
+
+------
+
+### 分布式计算系统
+
+#### 用户行为
+
+- 用户在系统中的各种操作行为称为用户行为。
+
+- 基于用户行为数据进行分析和统计，产出各种各样的数据统计分析报表和结果，供网站的用户、管理人员来查看，称为用户行为分析。
+- 每条记录用户行为的日志记录，叫做用户行为日志。
+
+#### 分布式存储+分布式计算
+
+- 采用分布式存储的方式，把 3 亿条数据分散存放在比如 30 台机器上，每台机器大概就放 1000 万条数据，大概就 1GB 的数据量。
+- 通过分布式计算，把统计分析数据的计算任务，拆分成 30 个计算任务，每个计算任务都分发到一台机器上去运行。
+- 依托 30 台机器的资源**并行的进行数据的统计和分析**，就是所谓的分布式计算。
+- 每台机器的计算结果出来之后，就可以进行综合性的汇总，然后就可以拿到最终的一个分析结果。
+
+#### 总结
+
+- 分布式计算的方式，对于超大数据集的计算可以提升几十倍甚至几百倍的效率。
+- Hadoop HDFS 是用做分布式存储的，可以把一个超大文件拆分为很多小的数据块放在很多机器上。
+- Spark 是分布式计算系统，可以把计算任务分发到各个机器上，对各个数据块进行并行计算。
+
+------
+
+## 中间件
+
+### 消息中间件
+
+#### 主流消息中间件浅析
+
+- `ActiveMQ`
+  - 是老牌的消息中间件，国内很多公司过去运用的还是非常广泛的，功能很强大。
+  - 没法确认 ActiveMQ 可以支撑互联网公司的高并发、高负载以及高吞吐的复杂场景，在国内互联网公司落地较少。
+  - 使用较多的是一些传统企业，用 ActiveMQ 做**异步调用**和**系统解耦**。
+- `RabbitMQ`
+  - 可以支撑高并发、高吞吐、性能很高。
+  - 有非常完善便捷的后台管理界面可以使用。
+  - 支持集群化、高可用部署架构、消息高可靠支持，功能较为完善。
+  - 国内各大互联网公司落地大规模 RabbitMQ 集群支撑自身业务的 case 较多，国内各种中小型互联网公司使用 RabbitMQ 的实践也比较多。
+  - RabbitMQ 的开源社区很活跃，较高频率的迭代版本，来修复发现的 bug 以及进行各种优化。
+  - 自身是基于 erlang 语言开发的，所以导致较为难以分析里面的源码，也较难进行深层次的源码定制和改造。
+- `RocketMQ`
+  - 阿里开源的消息中间件。
+  - 经过阿里的生产环境的超高并发、高吞吐的考验，性能卓越。
+  - 还支持分布式事务等特殊场景。
+  - RocketMQ 是基于 Java 语言开发的，适合深入阅读源码。
+  - 有需要可以站在源码层面解决线上生产问题，包括源码的二次开发和改造。 
+- `Kafka`
+  - Kafka 提供的消息中间件的功能明显较少一些。
+  - Kafka 的优势在于专为超高吞吐量的**实时日志采集**、**实时数据同步**、**实时数据计算**等场景来设计。
+  - Kafka 在大数据领域中配合实时计算技术（比如 Spark Streaming、Storm、Flink）使用的较多。
+  - 在传统的MQ中间件使用场景中较少采用。
+
+#### 消息中间件使用场景
+
+- **采用MQ中间件来实现系统解耦**。
+- 异步调用。
+- 流量削峰平谷，用有限的机器资源承载高并发请求。
+
+#### 使用消息中间件的缺点
+
+- 系统可用性降低。
+  - 系统的部分业务的可用性完全依赖于中间件集群的可用性。
+- 系统稳定性降低。
+  - 消息投递的可靠性。
+  - 消费消息接口的幂等性。
+- 分布式一致性问题。
+  - 可能出现分布式事务不一致的场景，需要通过专门的方案来保障。
+
+------
+
+### 消息中间件数据可靠性
+
+#### 消息持久化
+
+- 配置消息中间件的 queue 是持久化的。
+- 开启同步刷盘功能，消息刷入到硬盘才返回成功给生产者。
+
+#### 可靠投递
+
+- 事务消息机制，RabbitMQ 中事务消息机制性能极差，不推荐使用，推荐使用**轻量级的 confirm 机制**。
+- confirm 机制类似于消费者的 ack 机制。
+
+#### 可靠消费
+
+- 消费者关闭自动 ack 确认机制，开启手动 ack 机制，确保消息成功处理。
+  - 手动 ack 是通过 `delivery tag` 来确保消息消费后被确认的唯一标识。
+  - 手动 ack 使用的 `channal` 务必要和消息消费的时候使用同一个，否则不能确定唯一的 `delivery tag`。
+- 如果消息没有正常 ack ，mq 集群会将消息重发给其他消费者实例，保证消费者服务的接口的幂等性。
+
+------
+
+### RabbitMQ 消息消费吞吐量优化
+
+- RabbitMQ 基于一个 `prefetch count` 来控制这个 unack message 的数量。
+- unack 的消息会始终存放在 RabbitMQ 的内存中，如果过多消息 unack，可能导致出现内存不足的情况。
+- 通过 `channel.basicQos()` 方法来设置当前 channel 的 prefetch count。
+- 需要根据消费者集群的消费能力调整 `prefetch count` 的大小，保证系统的稳定运行。
+- 一个 channel 里的 unack message 超过了 prefetch count 指定的数量，此时 RabbitMQ 就会停止给这个 channel 投递消息，必须要等待已经投递过去的消息被 ack，此时才能继续投递下一个消息。
+
+- RabbitMQ 官方给出的建议是 prefetch count 一般设置在 100~300 之间。
+
+- prefetch count 过大导致内存溢出问题。
+
+------
+
+### 消息中间件高可用架构
+
+#### 集群化部署+数据多副本冗余
+
+- 避免因为中间件崩溃、宕机导致的数据丢失和系统不可用，一般使用**数据多副本冗余**、**集群镜像同步机制**。
+- Kafka 采用了多副本冗余和集群化部署的架构保证高可用和数据容错性。
+
+#### 多副本同步复制强制要求
+
+- 写入消息的时候，只有消息持久化到全部的节点并刷盘成功后，才算写入成功。
+- 写入的过程中任何一台副本机器异常，都向生产者报错。
+
+#### 多机器承载多副本强制要求
+
+- 当集群中的数量只剩下一台的时候，不能满足多副本的要求，那么无法对外提供写入功能。
+
+------
+
+### Kafka的高并发方案
+
+- 配置良好的 Kafka 集群甚至可以做到每秒几十万、上百万的超高并发写入。
+
+#### 页缓存技术
+
+- Kafka 是**基于操作系统的页缓存来实现文件写入的**。 
+- 操作系统本身有一层缓存，叫做 `page cache`，是**在内存里的缓存**，可以称之为 `os cache`，意思就是操作系统自己管理的缓存。
+- 在写入磁盘文件的时候，可以直接写入 `os cache` 里，也就是仅仅写入内存中，接下来由操作系统自己决定什么时候把 os cache 里的数据真的刷入磁盘文件中。
+
+#### 磁盘顺序写
+
+- 以磁盘顺序写的方式来写入数据，仅仅将数据追加到文件的末尾，不是在文件的随机位置来修改数据。
+- 普通的机械磁盘如果随机写的话，确实性能极差，也就是随便找到文件的某个位置来写数据。
+- **追加文件末尾按照顺序的方式来写数据的话，那么这种磁盘顺序写的性能基本上可以跟写内存的性能本身也是差不多。**
+
+#### 零拷贝技术
+
+- 直接让操作系统的 cache 中的数据发送到网卡后传输给下游的消费者，中间跳过了两次拷贝数据的步骤，Socket 缓存中仅仅会拷贝一个描述符过去，不会拷贝数据到 Socket 缓存。
+- 通过零拷贝技术，就不需要把 os cache 里的数据拷贝到应用缓存，再从应用缓存拷贝到 Socket 缓存了，两次拷贝都省略了，所以叫做零拷贝。
+- 对 Socket 缓存仅仅就是拷贝数据的描述符过去，然后数据就直接从 os cache 中发送到网卡上去了，这个过程大大的提升了数据消费时读取文件数据的性能。
+- 在从磁盘读数据的时候，会先看看 os cache 内存中是否有，如果有的话，其实读数据都是直接读内存的。
+- 如果 kafka 集群经过良好的调优，大量的数据都是直接写入 os cache 中，然后读数据的时候也是从 os cache 中读。
+
+<img src="README-image/Kafka%20%E9%9B%B6%E6%8B%B7%E8%B4%9D%E6%8A%80%E6%9C%AF.jpg" alt="Kafka 零拷贝技术" style="zoom:36%;" />
+
+------
+
+### Kafka的分布式架构
+
+#### Partition
+
+- `Partition`，**就是把一个 topic 数据集合拆分为多个数据分区**。
+- 每个 Partition 可以在不同的机器上，储存部分数据。
+- 为了避免单点故障导致的数据丢失问题，为每个 Partition 都创建了副本保存在集群内其他的机器上。
+- 如果某个 Partition 有多副本的话，Kafka 会选举其中一个 Parititon 副本作为 `Leader`，然后其他的 Partition 副本是 `Follower`。
+- 只有 `Leader Partition` 是对外提供读写操作的，`Follower Partition` 就是从 `Leader Partition` 同步数据。
+- 一旦 Leader Partition 宕机了，就会选举其他的 Follower Partition 作为新的 Leader Partition 对外提供读写服务，保证集群的高可用。
+
+#### ISR 机制
+
+- 数据刚写入到 Leader 节点，Follower 节点没有来得及进行数据复制，此时发生宕机，会丢失到刚刚的数据。
+- Kafka 通过 ISR 机制自动维护和监控哪些 Follower 及时的跟上了 Leader 的数据同步，保证数据的一致性。
+- Kafka 会自动给每个 Partition 维护一个 ISR 列表，这个列表里一定会有 Leader，然后还会包含跟 Leader 保持同步的 Follower。
+- 只要 Leader 的某个 Follower 一直跟他保持数据同步，那么就会存在于ISR列表里。
+- 如果 Follower 因为自身发生一些问题，导致不能及时的从 Leader 同步数据过去，那么这个 Follower 就会被认为是 `out-of-sync`，从 ISR 列表里踢出去。
+
+#### 保证写入可靠性
+
+- 每个 Partition 都至少得有 1 个 Follower 在 ISR 列表里，跟上了 Leader 的数据同步。
+- 每次写入数据的时候，都要求至少写入 Partition Leader 成功，同时还有至少一个 ISR 里的 Follower 也写入成功，才算这个写入是成功。
+- 如果不满足上述两个条件，那就一直写入失败，让生产系统不停的尝试重试，直到满足上述两个条件，然后才能认为写入成功。
+
+------
+
+### Kafka的网络通讯性能优化方案
+
+#### 数据结构
+
+- 每个 Topic 的消息会分散存储到多台 Kafka 机器上，每部分称为 Partition，这就是**Kafka 的分布式消息存储的机制**，每个 Kafka 服务端叫做一个 Broker，负责管理一台机器上的数据。
+- 默认情况下走一个负载均衡的策略，保证每个 Partition 的数据量相对均衡。
+
+#### batch机制
+
+- Kafka 在客户端放一个内存缓冲区，每次写入的消息先放到内存缓冲区里去，然后在内存缓冲区里，会把消息起来成为一个 batch。
+- 默认 kafka 规定的 batch 的大小是 16kb，当 batch 的大小达到预设值，客户端会通过网络通讯把 batch 发送到 broker 上。
+- **必须是发送到同一个 Topic 的同一个 Partition 的消息，才会进入一个 batch。**
+
+#### request机制
+
+- **多个 batch 打包成一个 request。**
+- Kafka 会把多个发往同一个 Broker 的 batch 打包成一个 `request`，然后一个 request 通过一次网络通信发送到那个 Broker 上去。
+
+#### 总结
+
+- 通过 batch 机制和 request 机制，Kafka 提升单位时间内发送数据的数量。
+- 单位时间内发送数据的数量，也就是所谓的`吞吐量`，也就是单位时间内可以发送多少数据到 broker 上去。
+
+------
+
+### Kafka的acks参数
+
+
+
