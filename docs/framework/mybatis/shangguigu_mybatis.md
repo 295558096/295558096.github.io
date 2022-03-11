@@ -722,6 +722,215 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
 - 查询标签的属性 `flushCache` 同时清空一级缓存和二级缓存，默认是false。
 - `sqlSession.clearCache()` 只清空一级缓存。
 
+------
+
+## 插件
+
+### pageHelper
+
+#### 简介
+
+- 一个开源的 Mybatis 通用的分页插件。
+- 该插件是通过物理分页实现SQL分页查询的。
+
+#### 使用方式
+
+##### 引入 jar 包
+
+- jsqlparser.jar
+- pagehelper.jar
+
+##### 引入依赖
+
+```xml
+<dependency>
+    <groupId>com.github.pagehelper</groupId>
+    <artifactId>pagehelper</artifactId>
+    <version>最新版本</version>
+</dependency>
+```
+
+##### 配置Mybatis插件
+
+- 特别注意，新版拦截器是 `com.github.pagehelper.PageInterceptor`。
+
+-  `com.github.pagehelper.PageHelper` 现在是一个特殊的 `dialect` 实现类，是分页插件的默认实现类，提供了和以前相同的用法。
+
+  ```xml
+  <!-- 
+      plugins在配置文件中的位置必须符合要求，否则会报错，顺序如下:
+      properties?, settings?, 
+      typeAliases?, typeHandlers?, 
+      objectFactory?,objectWrapperFactory?, 
+      plugins?, 
+      environments?, databaseIdProvider?, mappers?
+  -->
+  <plugins>
+      <!-- com.github.pagehelper为PageHelper类所在包名 -->
+      <plugin interceptor="com.github.pagehelper.PageInterceptor">
+          <!-- 使用下面的方式配置参数，后面会有所有的参数介绍 -->
+          <property name="param1" value="value1"/>
+  	</plugin>
+  </plugins>
+  ```
+
+  ##### 配置Spring插件
+
+  使用 spring 的属性配置方式，可以使用 `plugins` 属性像下面这样配置。
+
+  ```xml
+  <bean id="sqlSessionFactory" class="org.mybatis.spring.SqlSessionFactoryBean">
+    <!-- 注意其他配置 -->
+    <property name="plugins">
+      <array>
+        <bean class="com.github.pagehelper.PageInterceptor">
+          <property name="properties">
+            <!--使用下面的方式配置参数，一行配置一个 -->
+            <value>
+              params=value1
+            </value>
+          </property>
+        </bean>
+      </array>
+    </property>
+  </bean>
+  ```
+
+#### 参数介绍
+
+- 分页插件提供了多个可选参数。
+- `dialect` 
+  - 默认情况下会使用 PageHelper 方式进行分页。
+  - 如果想要实现自己的分页逻辑，可以实现 `Dialect`(`com.github.pagehelper.Dialect`) 接口，然后配置该属性为实现类的全限定名称。
+- `helperDialect` 
+  - 分页插件会自动检测当前的数据库链接，自动选择合适的分页方式。 
+  - 你可以配置`helperDialect`属性来指定分页插件使用哪种方言。配置时，可以使用下面的缩写值。
+    - oracle
+    - mysql
+    - mariadb
+    - sqlite
+    - hsqldb
+    - postgresql
+    - db2
+    - sqlserver
+    - informix
+    - h2
+    - sqlserver2012
+    - derby
+  - **特别注意：**使用 SqlServer2012 数据库时，需要手动指定为 `sqlserver2012`，否则会使用 SqlServer2005 的方式进行分页。你也可以实现 `AbstractHelperDialect`，然后配置该属性为实现类的全限定名称即可使用自定义的实现方法。
+- `offsetAsPageNum`
+  - 默认值为 **false**，该参数对使用 `RowBounds` 作为分页参数时有效。
+  -  当该参数设置为 **true** 时，会将 `RowBounds` 中的 `offset` 参数当成 `pageNum` 使用，可以用页码和页面大小两个参数进行分页。
+- `rowBoundsWithCount` 
+  - 默认值为**false**。
+  - 该参数对使用 RowBounds 作为分页参数时有效。
+  - 当该参数设置为true时，使用 RowBounds 分页会进行 count 查询。
+- `pageSizeZero`
+  -  默认值为 **false**。
+  - 当该参数设置为 true 时如果 `pageSize=0` 或者 `RowBounds.limit=0` 就会查询出全部的结果（相当于没有执行分页查询，但是返回结果仍然是 Page 类型）。
+- `reasonable`
+  - 分页合理化参数，默认值为false。
+  - 当该参数设置为 true 时，`pageNum<=0` 时会查询第一页， pageNum>pages（超过总数时），会查询最后一页。
+  - 默认 false 时，直接根据参数进行查询。
+- `params`
+  - 为了支持`startPage(Object params)`方法，增加了该参数来配置参数映射。
+  - 用于从对象中根据属性名取值， 可以配置 pageNum、pageSize、count、pageSizeZero、reasonable。
+  - 不配置映射的用默认值， 默认值为`pageNum=pageNum;pageSize=pageSize;count=countSql;reasonable=reasonable;pageSizeZero=pageSizeZero`。
+- `supportMethodsArguments`
+  - 支持通过 Mapper 接口参数来传递分页参数，默认值`false`。
+  - 分页插件会从查询方法的参数值中，自动根据上面 `params` 配置的字段中取值，查找到合适的值时就会自动分页。 
+- `autoRuntimeDialect`
+  - 默认值为 false。
+  - 设置为 true 时，允许在运行时根据多数据源自动识别对应方言的分页 。
+  - 不支持自动选择sqlserver2012，只能使用sqlserver。
+- `closeConn`
+  - 默认值为 true。
+  - 当使用运行时动态数据源或没有设置 `helperDialect` 属性自动获取数据库类型时，会自动获取一个数据库连接， 通过该属性来设置是否关闭获取的这个连接。
+  - 默认 true 关闭，设置为 false 后，不会关闭获取的连接，这个参数的设置要根据自己选择的数据源来决定。
+- `aggregateFunctions`(5.1.5+)
+  - 默认为所有常见数据库的聚合函数，允许手动添加聚合函数（影响行数），所有以聚合函数开头的函数，在进行 count 转换时，会套一层。
+  - 其他函数和列会被替换为 count(0)，其中count列可以自己配置。
+
+#### 使用方式
+
+```java
+//第一种，RowBounds方式的调用
+List<User> list = sqlSession.selectList("x.y.selectIf", null, new RowBounds(0, 10));
+
+//第二种，Mapper接口方式的调用，推荐这种使用方式。
+PageHelper.startPage(1, 10);
+List<User> list = userMapper.selectIf(1);
+
+//第三种，Mapper接口方式的调用，推荐这种使用方式。
+PageHelper.offsetPage(1, 10);
+List<User> list = userMapper.selectIf(1);
+
+//第四种，参数方法调用
+//存在以下 Mapper 接口方法，你不需要在 xml 处理后两个参数
+public interface CountryMapper {
+    List<User> selectByPageNumSize(
+            @Param("user") User user,
+            @Param("pageNum") int pageNum, 
+            @Param("pageSize") int pageSize);
+}
+//配置supportMethodsArguments=true
+//在代码中直接调用：
+List<User> list = userMapper.selectByPageNumSize(user, 1, 10);
+
+//第五种，参数对象
+//如果 pageNum 和 pageSize 存在于 User 对象中，只要参数有值，也会被分页
+//有如下 User 对象
+public class User {
+    //其他fields
+    //下面两个参数名和 params 配置的名字一致
+    private Integer pageNum;
+    private Integer pageSize;
+}
+//存在以下 Mapper 接口方法，你不需要在 xml 处理后两个参数
+public interface CountryMapper {
+    List<User> selectByPageNumSize(User user);
+}
+//当 user 中的 pageNum!= null && pageSize!= null 时，会自动分页
+List<User> list = userMapper.selectByPageNumSize(user);
+
+//第六种，ISelect 接口方式
+//jdk6,7用法，创建接口
+Page<User> page = PageHelper.startPage(1, 10).doSelectPage(new ISelect() {
+    @Override
+    public void doSelect() {
+        userMapper.selectGroupBy();
+    }
+});
+//jdk8 lambda用法
+Page<User> page = PageHelper.startPage(1, 10).doSelectPage(()-> userMapper.selectGroupBy());
+
+//也可以直接返回PageInfo，注意doSelectPageInfo方法和doSelectPage
+pageInfo = PageHelper.startPage(1, 10).doSelectPageInfo(new ISelect() {
+    @Override
+    public void doSelect() {
+        userMapper.selectGroupBy();
+    }
+});
+//对应的lambda用法
+pageInfo = PageHelper.startPage(1, 10).doSelectPageInfo(() -> userMapper.selectGroupBy());
+
+//count查询，返回一个查询语句的count数
+long total = PageHelper.count(new ISelect() {
+    @Override
+    public void doSelect() {
+        userMapper.selectLike(user);
+    }
+});
+//lambda
+total = PageHelper.count(()->userMapper.selectLike(user));
+```
+
+#### 官方文档
+
+[官方文档地址](https://github.com/pagehelper/Mybatis-PageHelper/blob/master/wikis/zh/HowToUse.md)
+
+------
+
 ## SSM整合
 
 ### 导包
@@ -779,6 +988,7 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
 ##### mybatis核心
 
 - mybatis.jar
+- mybatis-spring.jar
 
 #### 其他
 
@@ -814,6 +1024,69 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
   </listener-class>
 </listener>
 ```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:context="http://www.springframework.org/schema/context" xmlns:tx="http://www.springframework.org/schema/tx"
+    xmlns:aop="http://www.springframework.org/schema/aop"
+    xsi:schemaLocation="http://www.springframework.org/schema/beans
+        http://www.springframework.org/schema/beans/spring-beans-3.0.xsd
+        http://www.springframework.org/schema/context
+        http://www.springframework.org/schema/context/spring-context-3.0.xsd http://www.springframework.org/schema/tx http://www.springframework.org/schema/tx/spring-tx.xsd http://www.springframework.org/schema/aop https://www.springframework.org/schema/aop/spring-aop.xsd">
+
+    <!-- 扫描组件，除了 Controller-->
+    <context:component-scan base-package="xx">
+        <context:exclude-filter type="annotation" expression="org.springframework.stereotype.Controller"/>
+    </context:component-scan>
+
+    <!-- 导入外部配置-->
+    <context:property-placeholder location="classpath: jdbc.properties"/>
+
+    <!-- 配置数据源-->
+    <bean id="dataSource" class="com.alibaba.druid.pool.DruidDataSource">
+        <property name="username" value="${jdbc.user}"/>
+        <property name="password" value="${jdbc.password}"/>
+        <property name="url" value="${jdbc.url}"/>
+        <property name="driverClassName" value="${jdbc.driver}"/>
+    </bean>
+
+    <!-- 配置事务管理器-->
+    <bean id="transactionManager" class="org.springframework.jdbc.datasource.DataSourceTransactionManager">
+        <property name="dataSource" ref="dataSource"/>
+    </bean>
+
+    <!--配置事务切面-->
+    <aop:config>
+        <aop:pointcut id="transactionPointcut" expression="execution(* com.xxx.*.*.service.*.*(..))"/>
+        <aop:advisor pointcut-ref="transactionPointcut" advice-ref="transactionAdvice"/>
+        <aop:aspect ref="tddlrwRounter">
+            <aop:around pointcut-ref="transactionPointcut" method="determineReadOrWriteDB"/>
+        </aop:aspect>
+    </aop:config>
+
+    <!-- 配置事务路由器-->
+    <bean id="tddlrwRounter" class="com.tiangou.tgframe.aop.TDDLRWRounter"/>
+
+    <!-- 配置事务切面规则-->
+    <tx:advice id="transactionAdvice" transaction-manager="transactionManager">
+        <tx:attributes>
+            <tx:method name="add*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="edit*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="remove*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="insert*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="save*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="upd*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="modify*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="delete*" propagation="REQUIRED" rollback-for="java.lang.Exception"/>
+            <tx:method name="*" propagation="SUPPORTS" read-only="true"/>
+        </tx:attributes>
+    </tx:advice>
+</beans>
+```
+
+
 
 #### SpringMVC
 
@@ -861,7 +1134,78 @@ Mybatis 的顶级节点属性是 `configuration`，下面可以配置众多标�
 </filter-mapping>
 ```
 
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:context="http://www.springframework.org/schema/context"
+    xmlns:mvc="http://www.springframework.org/schema/mvc"
+    xsi:schemaLocation="http://www.springframework.org/schema/beans
+        http://www.springframework.org/schema/beans/spring-beans.xsd   
+        http://www.springframework.org/schema/context
+        http://www.springframework.org/schema/context/spring-context.xsd  
+        http://www.springframework.org/schema/mvc  
+        http://www.springframework.org/schema/mvc/spring-mvc.xsd">
+
+    <!-- 只扫描控制器-->
+    <context:component-scan base-package="xxx" use-default-filters="false">
+        <context:include-filter type="annotation" expression="org.springframework.stereotype.Controller"/>
+    </context:component-scan>
+
+    <!--文件解析器-->
+    <bean id="multipartResolver" class="org.springframework.web.multipart.commons.CommonsMultipartResolver">
+        <property name="defaultEncoding" value="UTF-8"/>
+        <property name="maxUploadSize" value="20971520"/>
+    </bean>
+
+    <!-- 视图解析器-->
+    <bean id="internalResourceViewResolver"
+        class="org.springframework.web.servlet.view.InternalResourceViewResolver">
+        <property name="prefix" value="/WEB-INF/pages/"/>
+        <property name="suffix" value=".html"/>
+    </bean>
+
+    <!-- 扫描静态-->
+    <mvc:default-servlet-handler/>
+    <!-- 扫描动态-->
+    <mvc:annotation-driven/>
+</beans>
+```
+
 #### Mybatis
+
+```xml
+<!-- sqlSessionFactory -->
+<bean id="sqlSessionFactory" class="org.mybatis.spring.SqlSessionFactoryBean">
+  <!-- mybatis配置文件位置-->
+  <property name="configLocation" value="mybatis-config.xml"/>
+  <property name="dataSource" ref="dataSource"/>
+  <!-- 自动扫描entity目录, 省掉 Configuration.xml 里的手工配置 -->
+  <property name="typeAliasesPackage" value="com.xxx.*.entity"/>
+  <!-- 显式指定Mapper文件位置 -->
+  <property name="mapperLocations" value="classpath:mybatis/**/*Mapper.xml"/>
+</bean>
+
+<!-- 指定Mybatis扫描的Mapper.java位置并注入到IOC容器中-->
+<bean class="org.mybatis.spring.mapper.MapperScannerConfigurer">
+  <property name="basePackage" value="com.tgou.unionPayShop"/>
+  <property name="sqlSessionFactoryBeanName" value="sqlSessionFactory"/>
+</bean>
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE configuration PUBLIC "-//mybatis.org//DTD Config 3.0//EN" "http://mybatis.org/dtd/mybatis-3-config.dtd">
+<configuration>
+  <settings>
+    <setting name="mapUnderscoreToCamelCase" value="true"/>
+    <!-- 打印sql日志 -->
+    <setting name="logImpl" value="STDOUT_LOGGING" />
+  </settings>
+</configuration>
+```
+
+
 
 #### 其他
 
