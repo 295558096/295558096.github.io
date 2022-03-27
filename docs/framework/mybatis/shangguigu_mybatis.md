@@ -1205,9 +1205,256 @@ total = PageHelper.count(()->userMapper.selectLike(user));
 </configuration>
 ```
 
+------
 
+## 工作原理
 
-#### 其他
+### 分层情况
+
+#### 接口层
+
+- 配置信息维护接口。
+- 接口调用方式。
+- 基于 StatementID 进行唯一接口调用。
+- 基于 Mapper 接口。
+
+#### 数据处理层
+
+- 参数映射 `ParameterHandler`
+  - 参数映射配置
+  - 参数映射解析
+  - 参数类型解析
+- SQL解析 `SqlSource`
+  - SQL语句配置
+  - SQL语句解析
+  - SQL语句动态生成
+- SQL执行 `Executor`
+  - `SimpleExecutor` 简单执行器
+  - `BatchExecutor` 批量执行器
+  - `ReuseExecutor` 可复用执行器
+- 结果处理和映射 `ResultSetHandler`
+  - 结果映射配置
+  - 结果类型转换
+  - 结果类型转换
+
+#### 框架支撑层
+
+- SQL 语句配置方式
+  - 基于XML配置
+  - 基于注解
+- 事务管理
+- 连接池管理
+- 缓存机制
+
+#### 引导层
+
+- 基于 XML 配置方式
+- 基于 Java API 方式
+
+### 主体流程
+
+- 获取 sqlSessionFactory 对象。
+  - 解析配置文件的每一个信息保存在 Configuration 中，返回包含 Configuration 的 `DefaultSqlSession`。
+- 获取 sqlSession 对象。
+  - 返回 `SqlSession` 的实现类 `DefaultSqlSession` 对象。他里面包含了 Executor 和 Configuration。
+- 获取接口的代理对象，MapperProxy。
+  - 使用 MapperProxyFactory 创建一个 MapperProxy 的代理对象。
+- 执行增则改查方法。
+
+### 获取 SqlSessionFactory 的流程
+
+>根据配置文件，创建 SqlSessionFactory。
+
+- `SqlSessionFactoryBuilder` 会加载mybaitis全局配置文件，并通过XPath解析的方式，解析出全局配置信息。
+- `org.apache.ibatis.session.Configuration` 类的对象保存了全部的全局配置信息。
+- 解析全局配置文件的过程中，会加载 Mappers 的配置，根据类名或者url地址找到 mapper.xml 文件，然后解析 `mapper.xml` 文件。
+- 通过校验和解析 mapper.xml，获取该 xml 中的全部配置信息和 增删改查的SQL 语句块。
+- 所有的增删改查标签都会封装成为一个 `org.apache.ibatis.mapping.MappedStatement` 对象，并保存在 `configuration` 中。
+- 通过传入 `Configuration` 对象并调用 `XmlConfigBuilder` 的 `build`方法，得到默认的 `DefaultSqlSessionFactory` 实例。
+
+#### Configuration
+
+- Mybatis 中来封装服务启动后解析全部配置和SQL映射文件获得的全部属性。
+- `Configuration` 对象中包含了全部的 `MappedStatement` 对象，属性名为 `mappedStatements`。
+
+#### MappedStatement
+
+- Mybatis 中用来映射在 xml 映射文件中一个SQL语句的全部信息。
+- 包含缓存、配置、唯一ID、来源、缓存使用情况以及全部的标签属性。
+- Mybatis 工作工作过程中通过id确定要调用的 `MappedStatement`，基于 `MappedStatement` 进行进一步的绑定参数、执行SQL、映射结果等操作。
+
+### 通过 OpenSession 获取 SqlSession对象流程
+
+- 调用 `DefaultSqlSessionFactory` 的 `openSession` 方法，底层调用的是 `Configuration` 的 `openSessionFromDataSource` 方法。
+- Configuration 获取事务的信息以及 `ExecutorType` 的信息构建出对应的 `Executor` 对象。
+- 如果有二级缓存配置开启，创建 `CachingExecutor(executor)`。
+- 获取到全部的拦截器插件信息，调用每一个拦截器重新包装 executor 并返回。
+- 通过 `configuration`、`executor` 以及是否自动提交属性构建出一个 `DefaultSqlSession` 对象。
+
+#### Executor
+
+- Mybatis四大对象之一，代表着SQL语句的执行器。
+- Executor 中包含 `Configuration` 对象和 `Transaction` 对象。
+
+### 通过getMapper获取到接口的代理对象流程
+
+- 调用 `DefaultSqlSession` 的 `getMapper` 方法获取接口的代理对象，实际上调用的是 `configuration` 对象的 `getMapper` 方法。
+- configuration底层是调用的 `MapperRegistry#getMapper` 方法。
+- MapperRegistry 的 getMapper 方法中是从 `knownMappers` 根据类型获取对应 Mapper 接口代理对象的工厂对象，即 `MapperProxyFactory`。
+- 通过调用 `MapperProxyFactory#newInstance` 方法，传入 sqlSession 参数，获得 `MapperProxy`对象。
+- `MapperProxy `是 `InvocationHandler` 的实现类，可以创建动态代理对象，实际上也是通过 jdk 的动态代理接口创建的 **Mapper 代理对象**。
+
+#### MapperProxyFactory
+
+#### MapperProxy
+
+#### MapperRegistry
+
+### 执行增删改查流程
+
+>以查询为例。
+
+- 通过返回的代理对象调用查询方法，实际上是通过 `MapperProxy` 调用他的 `invoke` 方法。
+
+- invoke 方法中会根据方法是来自于接口还是来 Object 类走不同的执行流程。
+
+  - Object 的方法直接执行。
+  - 接口的方法会调用 `MapperMethod.execute(sqlSession, args)`。
+
+- `MapperMethod.execute` 方法会判断要执行的方法的增删改查的类型。
+
+- 判断返回值类型，执行调用不用的执行方法。
+
+- 调用 `MapperMethod#convertArgsToSqlCommandParam (args)`方法转换参数。
+
+- 调用 `DefaultSqlSession` 的 `selecX` 方法进行数据查询。
+
+- 根据 id 在 configuration 中获取到 MappedStatement 对象。
+
+- 调用 `Executor` 的 query 方法，传入查询参数、MappedStatement 等信息。
+
+- 调用 `MappedStatement` 的 `getBoundSql` 方法获取到 `BoundSql`的对象。
+
+- 通过解析参数和指定的语句，根据规则生成 Mybatis 中缓存使用的 key。
+
+- 尝试着根据 Key 从二级缓存中获取查询结果。
+
+- 如果没有在缓存中查到结果，直接调用 `executor#query` 方法查询结果。
+
+- `Executor#query` 方法会先从一级缓存中查询结果，如果没有的话，再走数据库查询，并且将查询的结果缓存到一级缓存。
+
+  - 获取 configuration 对象。
+
+  - 调用 `Configuration#newStatementHandler`方法创建 `StatementHandler` 对象。
+
+  - 创建 `ParamterHandler`，并为 `ParamterHandler` 对象绑定全部的插件。
+
+  - 创建 `ResultSetHandler`，并为 `ResultSetHandler` 对象绑定全部的插件。
+
+  - 通过 `StatementHandler` 预编译SQL生成JDBC执行需要使用的 `PrepareStatement` 对象并为 `PrepareStatement` 对象绑定全部的插件。
+
+  - 通过调用 `TypeHandler` 为 `PrepareStatement` 预编译参数、设置参数。
+
+  - 执行
+
+  - 通过 `ResultSetHandler` 封装查询出的结果，使用 `TypeHandler` 处理值。
+
+    
+
+#### StatementHandler
+
+- Mybatis四大对象之一。
+- 处理SQL语句预编译、设置参数等相关工作。
+
+#### BoundSql
+
+- Mybatis中的具体SQL信息的封装对象。
+
+#### TypeHandler
+
+- 类型处理器。
+- 在参数设置和结果集封装阶段被调用。
+
+#### ParamterHandler
+
+- Mybatis 四大对象之一。
+- 用于设置预编译参数。
+- 在生成 Statement 阶段被 StatementHandler 调用。
+
+#### ResultSetHandler
+
+- Mybatis 四大对象之一。
+- 用于结果集的封装处理。
+
+------
+
+## 插件开发
+
+### 简介
+
+- MyBatis 在四大对象的创建过程中，都会有插件进行介入。插件可以利用动态代理机制一层层的包装目标对象，需实现在目标对家执荇目标方法之前迸行拦截的效果。
+- **MyBatis 允许在已映射语句执行过程中的某一点进行拦截调用**。
+- Mybatis 插件的接口是 `org.apache.ibatis.plugin.Interceptor`。
+- **插件机制是通过调用 `Interceptor#plugin` 方法使用插件为目标对象创建一个代理对象**。
+- 默认情况下，MyBatis 允许使用插件来拦截的方法调用包括。
+  - Executor
+    - update
+    - query
+    - flushStatements
+    - commit
+    - rollback
+    - getTransaction
+    - close
+    - isClosed
+  - ParameterHandler
+    - getParameterObject
+    - setParameters
+  - ResultSetHandler
+    - handleResultSets
+    - handleOutputParameters
+  - StatementHandler
+    - prepare
+    - parameterize
+    - batch
+    - update
+    - query
+
+### 插件的绑定
+
+- 在四大对象创建后不会直接返回，而是会绑定插件，`interceptorChain.pluginAll(xxxHandler)`。
+
+- `org.apache.ibatis.plugin.InterceptorChain#pluginAll`
+
+  ```java
+    public Object pluginAll(Object target) {
+      for (Interceptor interceptor : interceptors) {
+        target = interceptor.plugin(target);
+      }
+      return target;
+    }
+  ```
+
+### 插件开发流程
+
+- 自定义插件类实现 `org.apache.ibatis.plugin.Interceptor`接口并实现相关方法。
+  - `intercept` 拦截方法后的处理操作，可以在目标方法执行前后添加自定义的业务逻辑。
+    - `MetaObject metaObject = SystemMetaObject.forobject(target)` 可以获取到元数据对象。
+    - 调用元数据对象的`setValue`和`getValue`可以设置和获取在元数据对象中的具体参数信息。
+  - `plugin` 为目标对象生成代理类。
+    - Mybatis 提供了工具类可以用于生成代理对象`Plugin#wrap`。
+  - `setProperties` 在插件注册时设置属性。
+- 通过将注解`@Intercepts` 标注在自定义插件类上，完成插件签名。
+  - `@Signature` 注解标记具体的拦截对象类型、方法名称和参数列表。
+- 在 Mybatis 的全局配置文件中注册编写好的插件。
+- 插件会在四大对象的创建过程中被`InterceptorChain#pluginAll`方法调用，每个插件会根据自己的签名匹配情况为对应的对象创建代理对象或者返回原对象。
+
+### 多插件运行流程
+
+- 多个插件在四大对象创建的过程中，会按照在全局配置文件中的注册顺序进行拦截。
+- 多个插件在目标方法的调用过程中，会按照在全局配置文件中的注册顺序的逆序进行拦截。
+- 多插件的创建过程，会为目标对象的代理对象继续创建代理对象。
+
+------
 
 ## 杂谈
 
