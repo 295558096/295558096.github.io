@@ -1456,6 +1456,63 @@ total = PageHelper.count(()->userMapper.selectLike(user));
 
 ------
 
+## 实用场景
+
+### 批量操作
+
+#### 简介
+
+- 操作数据库往往会又需要批量插入数据或者批量更新数据的功能。
+
+#### 常规方案
+
+- 通过 `forEach` 标签在 insert 的方法中动态生成多组要插入的 `values`。
+- 通过 `forEach` 标签生成**多条SQL语句**，一次性插入，需要**开启数据库的支持多条语句功能**。
+
+#### 风险
+
+- 通过一条长语句发送数据进行批量操作的时候，可能会出现SQL超长的现象，导致数据库操作失败。
+
+#### BatchExecutor
+
+- Mybatis 提供了多种类型的 Executor，其中 `BatchExecutor` 是用来处理批量操作的。
+
+- 利用 `BatchExecutor` 执行的批量语句，不会把SQL语句直接逐条发送给数据库去执行，而是把预编译好的SQL语句发送给数据库，然后不断的给数据库发送要插入的参数信息，省去了在服务器端多次预编译的时间，传输给数据库的数据是更少的，数据库会在设置好参数之后，一次性执行全部的SQL，而不是多次执行。
+
+- `BatchExecutor` 的批量处理效率很高，在1w条数据的情况下，效率是普通执行器的三倍。
+
+- 与Spring的整合方式。
+
+  ```xml
+  <bean id="batchSqlSession" class="org.mybatis.spring.SqlSessionTemplate">
+    <constructor-arg name="sqlSessionFactory" ref="sqlSessionFactory"/>
+    <constructor-arg name="executorType" value="BATCH"/>
+  </bean>
+  ```
+
+### 存储过程
+
+- 实际开发中，操作数据库会使用一些存储过程。MyBatis 支持对存储过程的调用。
+
+#### 调用方式
+
+- `select` 标签中 `statementType="CALLABLE"`。
+- 标签体中调用语法 `{call procedure_name (#(param1_info), #(param2_info})}`。
+
+### 自定义 TypeHandler 处理枚举
+
+- 通过自定义 `TypeHandler` 的形式来在**设置参数**或者**取出结果集的**时候**自定义参数封装策略**。
+- 默认情况下 Mybatis 在处理枚举对象的时候是通过 `EnumTypeHandler` 处理的是枚举的名字，即枚举的 `name()`。
+-  `EnumOrdinalTypeHandler` 处理器是使用枚举的索引当做结果。
+- 保存方法和查询方法都可以指定自定义的 TypeHandler，注意存储和读取的时候要使用相同的处理器，避免数据混淆。
+
+#### 流程
+
+- 实现 `TypeHandler`接口或者继承 `BaseTypeHandler`。
+- 使用 `@MappedTypes`  定义处理的 java 类型。
+- 使用 `@MappedJdbcTypes` 定义 jdbcType 类型。
+- 在自定义结果集标签或者参数处理的时候声明使用自定义 TypeHandler 进行处理或者在全局配置 `TypeHandler` 要处理的 javaType。
+
 ## 杂谈
 
 ### 数据关联关系
