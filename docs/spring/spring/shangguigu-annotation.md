@@ -4,7 +4,7 @@
 
 ### AnnotationConfigApplicationContext
 
-- 基于注解配置的应用上下文。
+- 基于注解配置的应用上下文。                                     
 - 对注解配置进行解析和加载，过程等同于 `ClassPathXmlApplicationContext`。
 
 ### @Configuration
@@ -21,6 +21,7 @@
 - Bean 的类型是方法返回值的类型。
 - 默认注册到 IOC 容器中的 bean 的 name 是**当前方法的名称**。
 - 可以用过 `@Bean` 的 `name` 或者 `value` 属性，指定注入到容器中 Bean 的名称。
+- `@Bean` 标注的方法创建对象的时候，**方法参数的值从 Ioc 容器中获取**。
 
 ### @CompomentScan
 
@@ -244,6 +245,22 @@
 - 默认情况下，如果找不到对应的Bean，不能完成依赖注入，会抛出 `NoSuchBeanException` 的异常。
 - 属性 `require` 可以指定 `@Autowired` 注入行为是否必须完成，默认为 `true`。
 
+#### 适用场景
+
+- `构造器`
+  - 默认情况下，添加在 Ioc 容器中的组件，容器启动会调用无参构造器创建对象，再进行初始化赋值操作。
+  - 构造器要用的自定义类型的组件，都是从容器中获取。
+  - 如果**只有一个有参构造器的**情况下，不标记 `@Autowired` 注解，也会进行对应参数的依赖注入。
+- `参数`
+  - 标记在参数上，则当前参数会从 Ioc 容器中获取。
+- `方法`
+  - Spring 容器创建当前对象，就会调用方法，完成赋值。
+  - 方法使用的参数中**自定义类型的值**会从 Ioc 容器中获取。
+  - 
+- `属性`
+  - 比较常见的使用方式。
+  - 通常是标记在属性上，完成对象注入。
+
 ### @Qualifier
 
 - 使用 `@Qualifier` 指定需要装配的组件的 `id`，不使用属性名称匹配。
@@ -254,7 +271,91 @@
 - 在 `@Qualifier` 标记的属性下不生效。
 - 如果不想注入首选的 Bean，可以使用`@Qualifier` 指定注入 Bean 的 id。
 
-### AOP
+### @Resource
+
+- Spring 支持 `@Resource` 注解实现自动注入。
+- `@Resource` 是 **JSR250** 规范中包含的注解。
+- 默认是按照组件名称进行装配的。
+- 通过 `name` 属性可以指定要注入 bean 的名称。
+- 在 Spring5 中支持 `@Primary` 功能。
+- 没有能支持 `required=false`。
+
+### @Inject
+
+- Spring 支持 `@Inject` 注解实现自动注入。
+- `@Inject` 是 JSR3Inject30 规范中包含的注解。
+- 需要导入 `javax.inject` 的 jar 包。
+- 注入的方式和 **@Autowired** 一样，但是注解本身没有其他的属性用于扩展。
+
+### Aware 注入 Spring 底层组件 & 原理
+
+- Spring 提供了一些列的 `xxxAware`接口以便于**自定义组件使用 Spring 容器底层的组件**。
+- `Aware` 感知接口，是这一些列接口的顶级接口，通过回调的方式，将各种底层资源**注入**到自定义组件中。
+- **`XXXAware`接口实现的注入功能都是因为有对应的实现了 `BeanPostProcessor`接口的 `XXXAwareProcessor`，在Bean初始化前后进行对应资源的注入操作。**
+
+#### ApplicationContextAware
+
+- 用于注入 Ioc 容器的 Aware 接口实现。
+
+#### ApplicationEventPublisherAware
+
+- 用于注入**事件派发器**的 Aware 接口实现。
+
+#### BeanClassloaderAware
+
+- 用于注入**类加载器**的 Aware 接口实现。
+
+#### BeanFactoryAware
+
+- 用于注入**BeanFactory**的 Aware 接口实现。
+
+#### BeanNameAware
+
+- 用于注入**Bean名称**的 Aware 接口实现。
+
+#### EmbeddedValueResolverAware
+
+- 用于注入**内置属性解析器**的 Aware 接口实现。
+- 方法传入的 `StringValueResolver` 可以用来解析带占位符的配置字符串。
+
+#### EnvironmentAware
+
+- 用于注入**环境变量**的 Aware 接口实现。
+
+#### ImportAware
+
+- 用于注入**导入配置**的 Aware 接口实现。
+
+#### LoadTimeWeaverAware
+
+- 用于注入**LoadTime相关**的 Aware 接口实现。
+
+#### MessageSourceAware
+
+- 用于注入**国际化资源**的 Aware 接口实现。
+
+#### NotificationPublisherAware
+
+- 用于注入**通知发布者**的 Aware 接口实现。
+
+#### ResourceLoaderAware
+
+- 用于注入**资源加载器**的 Aware 接口实现。
+
+### @Profile
+
+- Spring 提供的可以根据当前**环境**，**动态的激活和切换**一系列组件的能力。
+- `@Profile` 标记在**组件**或者**配置类**上，指定组件在哪个环境的情况下才能被注册到容器中。
+- 没有标注环境标识的 bean 在，任何环境下都是加载的。
+- 加了环境标识的 bean，只有这个环境被激活的时侯才能注册到容器中，默认是 `default` 环境。
+
+#### 指定运行环境的方式
+
+- 通过命令行动态参数，在虚拟机参数位置添加 `-Dspring.profiles.active=xxx`。
+- 通过设置容器参数，`applicationContext.getEnvironment().setActiveProfiles("xxx")`。
+- 
+
+## AOP
 
 xx
 
