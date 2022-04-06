@@ -4,4 +4,4 @@
 
 ## 学习笔记
 
-- [尚硅谷Spring核心基础](/spring/springmvc/shangguigu-base.md)
+- [尚硅谷SpringMVC核心基础](/spring/springmvc/shangguigu-base.md)
