@@ -353,15 +353,207 @@
 
 - 通过命令行动态参数，在虚拟机参数位置添加 `-Dspring.profiles.active=xxx`。
 - 通过设置容器参数，`applicationContext.getEnvironment().setActiveProfiles("xxx")`。
-- 
+
+------
 
 ## AOP
 
-xx
+### 简介
 
-### 声明式事务
+- 指在程序运行期闻动态的将某段代码切入到指定方法指定位置进行运行的编程方式。
+- AOP 的底层就是动态代理。
 
-xx
+### 通知的种类
+
+- `前置通知` 
+  - 在目标方法运行之前运行。
+  - `@Before`
+- `后置通知`
+  - 在目标方法运行结束之后运行，无论方法正常结束还是异常结束。
+  - `@After`
+- `返回通知`
+  - 在目标方法正常返回之后运行。
+  - `@AfterReturning`
+- `异常通知`
+  - 在目标方法运行发生异常以后运行。
+  - `@AfterThrowing`
+- `环绕通知`
+  -  动态代理，手动推进目标发送的运行。
+  - `@Around`
+
+### @PointCut
+
+- `@PointCut` 注解用于抽取公共的**切入点表达式**。
+- `value` 属性用于指定切入点表达式。
+  - `execution (**)`
+- 本类引用直接使用 `方法名()`。
+- 外部类引用 `全类名.方法名()`。
+
+### @EnableAspectJAutoProxy
+
+- 开启基于注解的AOP模式。
+- 需要标记在配置类或者入口类上。
+- 相当于配置文件中的 `<aop:aspectj-autoproxy></aop:aspectj-autoproxy>`。
+
+### 使用
+
+1. 导入 Spring AOP 模块，`spring-aspects`。
+2. 定义业务逻辑类。
+3. 定义日志切面类。
+4. 根据业务需要给切面类的目标方法标注对应的通知注解，`value` 属性指定切入点表达式。
+5. 将**切面类**和**业务逻辑类**都加入到容器中。
+6. 在切面类上添加 `@Aspect` 注解声明此类为切面类。
+7. 在配置类或者入口类上添加 `@EnableAspectJAutoProxy` 注解开启动态代理AOP功能。
+
+### 原理
+
+- `@EnableAspectJAutoProxy` 注解上标记了 `@Import` 注解。
+- 通过 `@Import` 注解，向 Ioc 容器中导入了`AspectJAutoProxyRegistrar.class`。
+- `AspectJAutoProxyRegistrar` 是接口 `ImportBeanDefinitionRegistrar` 的实现类，向容器中注册 `AnnotationAwareAspectJAutoProxyCreator` 组件，id 为 `internalAutoProxyCreator`。
+
+#### AnnotationAwareAspectJAutoProxyCreator
+
+- 注解切面动态代理创建器。
+- 继承关系。
+  - AnnotationAwareAspectJAutoProxyCreator
+    - AspectJAwareAdvisorAutoProxyCreator
+      - AbstractAdvisorAutoProxyCreator
+        - AbstractAutoProxyCreator
+          - SmartInstantiationAwareBeanPostProcessor & BeanFactoryAware
+- 作为 `BeanPostProccessor` 实现的逻辑
+- 作为 `BeanFactoryAware` 实现的逻辑
+
+### 流程
+
+#### 加载和创建后置处理器
+
+1. 传入配置类，创建 Ioc 容器。
+
+2. 注册配置类，调用 `refresh()` 刷新容器。
+
+3. 调用 `registerBeanPostProcessors(beanFactory)` 方法，注册 bean 的后置处理器来方便拦截 bean 的创建。
+
+   1. 先获取 ioc 容器已经定义了的需要创建对象的所有 `BeanPostProcessor`。
+
+   2. 给容器中加别的 `BeanPostProcessor`。
+
+   3. 按照 `PriorityOrdered` 、 `Ordered`和没有优先级接口的顺序将 `BeanPostProcessor` 的按照优先级完成注册。
+
+   4. 注册 `BeanPostProcessor`，实际上就是创建 `BeanPostProcessor` 对象，保存在容器中，`AnnotationAwareAspectJAutoProxyCreator` 会在这个时候被创建，id 为 `internalAutoProxyCreator`。
+
+      1. 创建 Bean 的实例。
+      2. `populateBean`，给 bean 的各种属性赋值。
+      3. `initializeBean`，初始化 bean。
+         1. `invokeAwareMethods`，处理 Aware 接口的方法回调。
+         2. `applyBeanPostProcessorsBeforeInitialization` ，应用后置处理器的 `beforeInitialization`方法。
+         3. `invokeInitMethods` 调用初始化方法。
+         4. `applyBeanPostProcessorsAfterInitialization`，应用后置处理器的 `afterInitialization`方法。
+      4. `BeanPostProcessor(AnnotationAwareAspectJAutoProxyCreator)` 创建成功。
+
+   5. 把 `BeanPostProcessor` 注册到 `BeanFactory` 中。
+
+      ------
+
+      至此完成了后置处理器的注册，`AnnotationAwareAspectJAutoProxyCreator` 已经注册完毕。
+
+      ------
+
+#### 创建对象
+
+- `AnnotationAwareAspectJAutoProxyCreator` 是 `InstantiationAwareBeanPostProcessor` 的子类，实现了 `postProcessBeforeInstantiation` 方法，会在 Bean 创建之前进行拦截。
+- 
+
+1. `finishBeanFactoryInitialization(beanFactory)`，完成 BeanFactory 的初始化，创建剩下的单实例 Bean。
+   1. 遍历获取容器中所有的 Bean，依次创建对象 `getBean(beanName)`。
+   2. 创建Bean的过程。
+      1. 先从缓存中获取当前 bean，能获取到直接使用，不能获取再进行创建。**所有创建好的单实例 Bean 都会被缓存起来**。
+      2. 通过 `createBean()` 方法创建 Bean 对象。
+      3. `resolveBeforeInstantiation(beanName, mbdToUse)`，希望后置处理器在此能返回一个代理对象替代原对象，如果能返回，就使用这个对象。
+         1. 后置处理器先尝试返回对象。
+         2. 调用 `applyBeanPostProcessorsBeforeInstantiation`方法，遍历全部的后置处理器，在其中找到`InstantiationAwareBeanPostProcessor`类型的后置处理器，调用其 `postProcessorsBeforeInstantiation`方法来尝试获得代理的 Bean 对象。
+         3. 判断当前 bean 是否在 `advisedBeans` 中（保存了所有需要增强 bean)。
+         4. 判断当前 bean 是否是基础类型的 `Advice`、`Pointcut`、`Advisor`、`AopInfrastructureBean`或者是否是切面。
+         5. 是否需要跳过。
+            1. 获取候选的增强器（切面里面的通知方法），每个增强器封装为 `InstantiationModelAwarePointcutAdvisor`对象。
+         6. 创建对象
+         7. 调用 `postProcessAfterInitialization` 方法，`wrapIfNecessary(bean, beanName, cacheKey)`，包装对象 如果需要的话。
+            1. 获取当前 bean 的所有增强器（通知方法）。
+            2. 根据切入点表达式判断当前方法是否需要增强，找到当前Bean需要的用的增强器。
+            3. 给增强器进行排序。
+         8. 保存当前 bean 在 advisedBeans中，表示已经增强处理。
+         9. **如果当前 bean 需要增强，创建当前 bean 的代理对象。**
+         10. 保存增强器到代理工厂，proxyFactory。
+         11. 创建代理对象，使用JDK默认代理或者CGLIB。
+         12. 给容器中返回当前组件增强后的**代理对象**。
+      4. 如果不能就继续调用 `doCreateBean(beanName, mbdToUse, args)` 方法创建对象。
+
+#### 代理对象执行方法流程
+
+>容器中保存了组件的代理对象，每次调用目标方法时，会调用对应的增强通知方法。
+
+1. 调用目标方法实际上调用的是 `CglibAopProxy#intercept`，拦截目标法的执行。
+2. 根据 `ProxyFactory` 对象获取将要执行的目标方法的拦截器链。
+   1. 创建 `List <Object> interceptorList` 保存所有拦截器。
+   2. 遍历所有的增强器，将其转为 `Interceptor`。
+   3. 将增强器转为 `List <MethodInterceptor>`。
+      1. 如果是 `MethodInterceptor`，直接加入到集合中。
+      2. 如果不是，使用 `AdvisorAdapter` 将增强器转为 `MethodInterceptor`，再加入到集合中。
+   4. 
+3. 如果没有拦截器链，直接执行目标方法。
+4. 如果有拦截器链，把需要执行的**目标对象**、**目标方法**、**拦截器链**等信息传入创建一个 `CglibMethodInvocation` 对象，并调用 `proceed` 方法。
+
+#### 拦截器链的调用过程
+
+>拦截器链是将每一个通知方法又被包装为方法拦截器，利用 MethodInterceptor 机制。
+>
+>通过拦截器链的机制，保证通知方法与目标方法的执行。
+
+1. 如果没有拦截器或者拦截器的索引和拦截器数组 - 1 大小一样（指定到了最后一个拦截器）执行目标方法。
+2. 链式获取每一个拦截器，拦截器执行 invoke 方法，每一个拦截器等待下一个拦截器执行完成返回以后再来。
+
+![image-20220410204227890](image/image-20220410204227890.png)
+
+### 总结
+
+- `@EnableAspectJAutoProxy` 开启 AOP 功能。
+- `@EnableAspectJAutoProxy` 会给容器中注册一个组件 `AnnotationAwareAspectJAutoProxyCreator`。
+- `AnnotationAwareAspectJAutoProxyCreator` 是一个后置处理器。
+- 容器的创建流程。
+  - `registerBeanPostProcessors()` 注册后置处理器。
+  - `finishBeanFactoryInitialization()` 初始化剩下的单实例 bean。
+    - 创建业务逻辑组件和切面组件。
+    - `AnnotationAwareAspectJAutoProxyCreator` 拦截组件的创建过程。
+    - 组件创建完之后，判断组件是否需要增强。
+      - 将切面的通知方法，包装成增强器 `Advisor`。给业务逻辑组件创建一个代理对象。
+- 执行目标方法。
+  - 代理对象执行目标方法。
+  - 通过 `CglibAopProxy.intercept()` 进行方法的拦截。
+    - 得到目标方法的拦截器链，即**增强器包装成拦截器**集合， `List<MethodInterceptor>`。
+    - 利用拦截器的链式机制，依次进入每一个拦截器进行执行。
+      - `正常执行` 前置通知 —> 目标方法 —> 后置通知 —> 返回通知。
+      - `出现异常` 前置通知 —> 目标方法 —> 后置通知 —> 异常通知。
+
+------
+
+## 声明式事务
+
+### 环境搭建
+
+- 导入相关依赖。
+  - 数据源、数据库驱动、spring-jdbc 模块。
+- 配置数据源、JdbcTemplate 操作数据库。
+- 配置事务控制器来管理事务，`PlatformTransactionManager`。
+- 在配置类获取启动类上开启基于注解的事务管理功能，`@EnableTransactionManagement`。
+- 在事务方法上添加 `@Transactional` 声明方法为事务方法。
+
+### @Transactional
+
+- 给方法上标注 `@Transactional` 表示当前方法是一个事务方法。
+
+### @EnableTransactionManagement
+
+- 用于开启基于注解的事务管理功能的注解。
+- 标记在配置类获取入口类上。
 
 ## 扩展原理
 
